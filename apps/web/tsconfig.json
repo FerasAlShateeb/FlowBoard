@@ -1,0 +1,12 @@
+{
+  "extends": "@flowboard/config/tsconfig.react.json",
+  "compilerOptions": {
+    // No `baseUrl`: it is deprecated and removed in TypeScript 7. Since TS 4.4
+    // `paths` resolves relative to this file, which is what we want anyway.
+    "paths": {
+      // Mirrors the Vite `resolve.alias` entry — keep the two in sync.
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src"]
+}

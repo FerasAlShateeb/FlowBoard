@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Turborepo
+.turbo/
+
+# Environment (never commit real secrets; keep the example)
+.env
+.env.*
+!.env.example
+
+# Test / coverage artifacts
+coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+playwright/.cache/
+.vitest/
+
+# Runtime uploads (attachments live in MinIO; this catches any local fallback)
+uploads/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

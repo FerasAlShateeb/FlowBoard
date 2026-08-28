@@ -1,0 +1,4 @@
+{
+  "extends": "@flowboard/config/tsconfig.base.json",
+  "include": ["src"]
+}

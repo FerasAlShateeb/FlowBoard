@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+
+    // Type-only imports must say so (`import type`). Without this, a bundler
+    // cannot always tell whether an import has a runtime side effect, and
+    // erasing it can silently drop a module that registers something.
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // ── Strictness. Non-negotiable across the monorepo. ────────────────────
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    // Indexing an array/record yields `T | undefined`. This is the option that
+    // makes `tasks[0].title` a compile error instead of a production crash —
+    // FlowBoard is full of ordered lists (board columns, fractional ranks,
+    // sprint rows), so keep it on.
+    "noUncheckedIndexedAccess": true,
+
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    // Ambient type packages are opt-in per workspace: a package that does not
+    // declare `"types": ["node"]` cannot accidentally use Node globals.
+    "types": [],
+
+    // Default is check-only. Packages that actually emit (apps/api) flip this
+    // in tsconfig.node.json.
+    "noEmit": true
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+
+  // Environment variables that participate in EVERY task hash. Turbo hashes
+  // task inputs to decide cache hits; a variable that changes behaviour but is
+  // not listed here would let a stale "pass" replay over a real config change.
+  "globalEnv": [
+    "NODE_ENV",
+    "PORT",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "JWT_REFRESH_SECRET",
+    "ACCESS_TOKEN_TTL",
+    "REFRESH_TOKEN_TTL",
+    "WEB_ORIGIN",
+    "LOG_LEVEL",
+    "S3_*",
+    "VITE_*"
+  ],
+
+  // `tsconfig.base.json` lives in `packages/config`, not at the root, so a bare
+  // filename would match nothing. Every workspace extends it, so a change to
+  // strictness must bust every cached task.
+  "globalDependencies": [".env", "packages/config/tsconfig.base.json"],
+
+  "tasks": {
+    // Library builds emit to `dist/`; `^build` makes a package's dependencies
+    // build first, which is what lets `apps/api` and `apps/web` typecheck
+    // against `@flowboard/shared`'s emitted `.d.ts`.
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+
+    // Long-running watch processes: never cacheable, never "finish".
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+
+    // ESLint reads only source + config, so the default input set is right and
+    // no dependency build is needed (lint here is type-unaware by design — see
+    // packages/config/eslint.config.mjs).
+    "lint": {},
+
+    // `tsc --noEmit` resolves cross-package imports through the dependency's
+    // emitted declarations, so dependencies must be built first.
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+
+    // Vitest unit/integration suites. `inputs` is deliberately left at the
+    // default ($TURBO_DEFAULT$ = every git-tracked file in the package):
+    // narrowing it can only ever HIDE a change from the hash, and a cached pass
+    // replayed over an edited fixture is a false green — strictly worse than a
+    // cache miss.
+    "test": {
+      "dependsOn": ["^build"]
+    },
+
+    // Playwright runs against real servers and a real database, so its result
+    // depends on process/DB state no input hash can observe. A cached pass
+    // would be a REPLAY, not a run.
+    //
+    // IT ALSO RUNS LAST, ALONE. Turbo would otherwise schedule it beside the
+    // ~2 600 Vitest cases in `apps/web` and `apps/api`, and a browser suite
+    // driving two real dev servers cannot compete with that for cores: the
+    // observed symptom was one arbitrary spec failing per gate run — a
+    // different one each time, all of them passing standalone in a third of
+    // their budget. Depending on the two unit suites costs wall-clock time the
+    // gate was not really saving (e2e is the long pole either way) and buys a
+    // result that means something. It also fails FAST in the common case: a
+    // broken unit test now short-circuits the browser run instead of racing it.
+    //
+    // ── THE KEY MUST BE THE PACKAGE NAME, NOT THE DIRECTORY ──────────────────
+    // This was written as `"e2e#test"` and therefore did nothing for the whole
+    // build: Turbo resolves `<name>#<task>` against the package NAME in
+    // `package.json` (`@flowboard/e2e`), not the folder it lives in, and an
+    // override that matches no package is silently ignored rather than being an
+    // error. Both halves were lost — e2e ran concurrently with the unit suites
+    // AND was cacheable — which is exactly the arrangement the paragraph above
+    // says was abandoned. It surfaced when `global-setup.ts`'s teardown guard
+    // caught `flowboard_test` mutating mid-run: the API's Vitest suite was still
+    // writing to it while Playwright ran. That guard is the only reason a silent
+    // config typo did not stay silent.
+    "@flowboard/e2e#test": {
+      "cache": false,
+      "dependsOn": ["@flowboard/web#test", "@flowboard/api#test"]
+    }
+  }
+}

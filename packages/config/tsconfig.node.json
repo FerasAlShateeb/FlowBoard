@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+
+    // `apps/api` is a CommonJS package (see its package.json). NodeNext makes
+    // TypeScript resolve and emit exactly the way Node will at runtime, which
+    // is what keeps dual ESM/CJS dependencies (@flowboard/shared, postgres-js)
+    // honest.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // NodeNext + CommonJS emit cannot honour `verbatimModuleSyntax` for the
+    // interop forms Express and friends need, so it is off for Node packages.
+    // Prefer `import type` anyway — the lint config nudges you there.
+    "verbatimModuleSyntax": false,
+
+    "types": ["node"],
+
+    // Node packages compile to `dist/` and are executed from there.
+    "noEmit": false
+  }
+}

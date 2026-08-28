@@ -1,0 +1,296 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# FlowBoard — PRODUCTION compose (Compose Spec, no legacy `version:` key).
+#
+# Everything runs in containers: Postgres, MinIO, the Express API, and nginx
+# serving the built SPA. The browser talks to ONE origin (nginx on :8080), which
+# proxies /api and /socket.io to the API over the private compose network.
+#
+#   cp .env.example .env            # then edit — see the PRODUCTION block
+#   docker compose build            # build the api + web images
+#   docker compose up -d            # postgres → minio → migrate → api → web
+#   docker compose ps               # every service should read (healthy)
+#   docker compose logs -f api
+#   docker compose down             # stop, KEEP the data volumes
+#   docker compose down -v          # stop and DELETE the data volumes
+#
+# The infrastructure-only development stack is `docker-compose.dev.yml`. The two
+# are fully isolated — different project name, different container names,
+# different volumes, different host ports — so they can run side by side.
+#
+# ── Configuration ────────────────────────────────────────────────────────────
+# Compose reads `.env` next to this file for the `${…}` values below. On a
+# machine that also runs the dev stack, keep production values in their own file
+# and pass it explicitly, so the dev `.env` is never read here:
+#
+#   docker compose --env-file .env.production up -d
+#
+# `${VAR:?message}` means "required": Compose refuses to start and prints the
+# message when the variable is missing. That list is exactly the set of values a
+# deployment MUST NOT inherit from an example file.
+#
+# ── Ports published to the host ──────────────────────────────────────────────
+#   8080  nginx (the app)                    ← WEB_PORT
+#   9200  MinIO S3 API (browser uploads)     ← S3_PORT
+#   9201  MinIO console, LOOPBACK ONLY       ← S3_CONSOLE_PORT
+# Postgres and the API are NOT published. They are reachable only from inside
+# the compose network, which is what keeps a cloud VM from serving its database
+# to the internet.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: flowboard-prod
+
+# ── Shared API environment ───────────────────────────────────────────────────
+# The `api` and `migrate` services are the SAME image with different commands
+# and must therefore see the same environment. A YAML anchor is the only way to
+# guarantee that; two hand-maintained copies drift, and the drift shows up as a
+# migration that ran against the wrong database.
+#
+# Every key here exists in `apps/api/src/config/env.ts`, the zod schema the API
+# validates at boot. A missing or malformed value exits the process with the
+# offending variables listed — it never starts half-configured.
+x-api-env: &api-env
+  # Hard-coded, never interpolated: this file IS the production deployment.
+  # `development` here would enable verbose error bodies and permissive logging.
+  NODE_ENV: production
+  PORT: '4000'
+
+  # The public origin the BROWSER loads the app from — scheme + host + port, no
+  # trailing slash. It is the CORS allow-list for REST *and* the Socket.IO
+  # handshake check, so a wrong value renders the login page and then fails
+  # every request with an opaque network error.
+  #   local verification : http://localhost:8080
+  #   real deployment    : https://flowboard.example.com
+  WEB_ORIGIN: ${WEB_ORIGIN:?set WEB_ORIGIN to the URL the browser loads the app from}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+  # `postgres` is the service name; Compose's embedded DNS resolves it on the
+  # private network. Port 5432 is the CONTAINER port and is unaffected by
+  # anything published (or not) to the host.
+  #
+  # A password containing `@ : / ? #` must be percent-encoded here — it is part
+  # of a URL, and postgres-js parses it as one.
+  DATABASE_URL: postgresql://${POSTGRES_USER:-flowboard}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-flowboard}
+
+  # TWO DIFFERENT secrets, both required. Generate with:
+  #   node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+  JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env — generate a real one}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env — generate a real one, different from JWT_SECRET}
+  ACCESS_TOKEN_TTL: ${ACCESS_TOKEN_TTL:-15m}
+  REFRESH_TOKEN_TTL: ${REFRESH_TOKEN_TTL:-30d}
+
+  # THE BROWSER'S view of object storage, not the API's — and that is the whole
+  # subtlety of this block.
+  #
+  # Attachments never pass through the API: it hands the browser a presigned
+  # URL and the browser PUTs/GETs straight to MinIO. An S3 signature covers the
+  # host and the path, so the URL the API signs must be byte-identical to the
+  # one the browser dials. One value therefore has to work from BOTH sides.
+  #
+  # `S3_PUBLIC_HOST` is published as a network alias on the `minio` service
+  # below, so the same name resolves inside the network (→ the container) and
+  # from the host (→ the published port), on the same port number. The default
+  # `flowboard.localhost` works out of the box: browsers resolve any
+  # `*.localhost` name to loopback (RFC 6761).
+  #
+  # For a real deployment set S3_PUBLIC_HOST to the storage hostname your users
+  # reach (e.g. `storage.example.com`, S3_SCHEME=https, S3_PORT=443) and put a
+  # TLS terminator in front of the published MinIO port. The alias keeps the
+  # API's own traffic inside the network instead of hairpinning through the
+  # public address.
+  S3_ENDPOINT: ${S3_SCHEME:-http}://${S3_PUBLIC_HOST:-flowboard.localhost}:${S3_PORT:-9200}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-flowboard}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env — it is the MinIO root password}
+  S3_BUCKET: ${S3_BUCKET:-flowboard-attachments}
+  S3_REGION: ${S3_REGION:-us-east-1}
+
+services:
+  # ── Postgres 17 ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    container_name: flowboard-prod-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flowboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Created on the FIRST boot of an empty volume only. Changing it later
+      # needs `down -v` (destroys the data) or a manual CREATE DATABASE.
+      POSTGRES_DB: ${POSTGRES_DB:-flowboard}
+    # No `ports:` on purpose. Nothing outside the compose network needs to reach
+    # the database, and publishing 5432 on a cloud VM exposes it to the
+    # internet. For a psql shell use `docker compose exec postgres psql …`; for
+    # a GUI, tunnel over SSH.
+    volumes:
+      # Named volume, never a bind mount: Postgres needs Linux filesystem
+      # semantics that a Windows/macOS bind mount does not provide.
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `$$` escapes to a single `$` so the container's shell expands it rather
+      # than Compose expanding it on the host.
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── MinIO (S3-compatible object storage) ───────────────────────────────────
+  # Holds task attachments. Unlike Postgres this MUST be reachable from the
+  # browser, because uploads and downloads go directly to it via presigned URLs.
+  #
+  # It listens on S3_PORT rather than the usual 9000, and the host mapping uses
+  # THE SAME NUMBER ON BOTH SIDES. That is a requirement, not a preference: a
+  # presigned URL is signed for a specific host:port, so `9200:9000` would make
+  # every signature fail with SignatureDoesNotMatch. If you change S3_PORT you
+  # change both halves at once — they are the same variable.
+  minio:
+    image: minio/minio:latest
+    container_name: flowboard-prod-minio
+    command: server /data --address ":${S3_PORT:-9200}" --console-address ":${S3_CONSOLE_PORT:-9201}"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-flowboard}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env — it is the MinIO root password}
+    ports:
+      # S3 API — the browser dials this directly. Same port both sides; see above.
+      - '${S3_PORT:-9200}:${S3_PORT:-9200}'
+      # Admin console, bound to LOOPBACK so it is never internet-facing. Reach
+      # it at http://localhost:9201 on the host, or over an SSH tunnel on a
+      # server. Set S3_CONSOLE_BIND=0.0.0.0 only if you know why you want that.
+      - '${S3_CONSOLE_BIND:-127.0.0.1}:${S3_CONSOLE_PORT:-9201}:${S3_CONSOLE_PORT:-9201}'
+    networks:
+      default:
+        aliases:
+          # This is what lets ONE presigned URL work from both the API container
+          # and the browser. See the S3_ENDPOINT comment in x-api-env.
+          - ${S3_PUBLIC_HOST:-flowboard.localhost}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:${S3_PORT:-9200}/minio/health/live']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── One-shot bucket bootstrap ──────────────────────────────────────────────
+  # Creates the attachments bucket once MinIO is healthy, then exits 0.
+  # `mc mb --ignore-existing` makes re-running harmless, and `restart: "no"`
+  # stops Compose from looping a service that is supposed to finish.
+  # Talks to the container directly (`minio:PORT`) — no presigning involved
+  # here, so the public alias is irrelevant.
+  #
+  # `MC_HOST_<alias>` is a URL, so S3_SECRET_KEY must be percent-encoded here if
+  # it contains `@ : / ? #`. The `base64url` generator in .env.example never
+  # produces those, which is the reason it is the recommended one.
+  minio-init:
+    image: minio/mc:latest
+    container_name: flowboard-prod-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_HOST_local: http://${S3_ACCESS_KEY:-flowboard}:${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}@minio:${S3_PORT:-9200}
+    entrypoint: >
+      /bin/sh -c "
+      mc mb --ignore-existing local/${S3_BUCKET:-flowboard-attachments} &&
+      echo 'bucket ${S3_BUCKET:-flowboard-attachments} ready'
+      "
+    restart: 'no'
+
+  # ── Migrations (one-shot, runs before the API every time) ──────────────────
+  # Same image as `api`, different command. Drizzle records applied migrations
+  # in `drizzle.__drizzle_migrations` and skips what it has already seen, so
+  # this is idempotent: on an unchanged deploy it prints "already up to date"
+  # and exits 0 in under a second.
+  #
+  # Why a service and not a documented manual step: `api` gates on
+  # `service_completed_successfully` below, which makes "schema is current
+  # before the first request" a property of `up -d` rather than of remembering.
+  # A failed migration leaves the API stopped instead of serving 500s against a
+  # half-migrated schema.
+  #
+  # Ad-hoc runs (e.g. after pulling a new image without a full `up`):
+  #   docker compose run --rm migrate
+  #
+  # `image:` is shared with `api` so the two build blocks resolve to one image;
+  # the second build is a pure cache hit.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: flowboard-prod-api:latest
+    container_name: flowboard-prod-migrate
+    command: ['node', 'dist/scripts/migrate.js']
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  # ── API (Express 5 + Socket.IO) ────────────────────────────────────────────
+  # Not published to the host: nginx is the only thing that talks to it, over
+  # the compose network. That also means the API never needs CORS for the app
+  # itself — everything arrives same-origin through nginx.
+  #
+  # The image's own HEALTHCHECK (see apps/api/Dockerfile) fetches
+  # /api/health, which touches Postgres — so `(healthy)` here means the API can
+  # actually serve, not merely that node started. `web` waits on it.
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: flowboard-prod-api:latest
+    container_name: flowboard-prod-api
+    environment: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # ── Web (nginx serving the built SPA) ──────────────────────────────────────
+  # The only service the outside world reaches. See apps/web/nginx.conf: static
+  # bundle + SPA fallback + /api and /socket.io proxied to `api`.
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Empty = same-origin relative URLs, which nginx proxies to `api`.
+        # Do NOT put the API's address here: that makes it a SECOND origin,
+        # with its own CORS, its own certificate and its own websocket check.
+        #
+        # VITE_* values are inlined into the static bundle at BUILD time, so
+        # changing this needs `up -d --build`, not a restart.
+        VITE_API_URL: ''
+    image: flowboard-prod-web:latest
+    container_name: flowboard-prod-web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # nginx serves plain HTTP on container port 80. 8080 on the host keeps it
+      # clear of the Vite dev server (5173) and of anything on 80. Put TLS
+      # termination (Caddy, a cloudflared tunnel, your own reverse proxy) in
+      # front of it for a real deployment, and set WEB_ORIGIN to that public
+      # https:// URL.
+      - '${WEB_PORT:-8080}:80'
+    healthcheck:
+      # busybox wget — the nginx:alpine image has no curl.
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1/']
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  # Compose prefixes these with the project name, so the real volume names are
+  # `flowboard-prod_postgres-data` / `flowboard-prod_minio-data` — distinct from
+  # the dev stack's, which is why both can run at once.
+  postgres-data:
+  minio-data:

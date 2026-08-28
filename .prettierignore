@@ -1,0 +1,14 @@
+# Generated or vendored — Prettier must never rewrite these.
+pnpm-lock.yaml
+# drizzle-kit output: the SQL is hand-edited only for what drizzle cannot emit
+# (see .agents/docs/database.md → Extensions), and `meta/` is a snapshot the
+# tool DIFFS against. Reformatting either would make the next `db:generate`
+# produce a spurious change, or worse, a spurious migration.
+apps/api/drizzle/
+node_modules/
+dist/
+build/
+.turbo/
+coverage/
+playwright-report/
+test-results/

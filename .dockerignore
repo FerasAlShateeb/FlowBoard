@@ -1,0 +1,103 @@
+# Build context filter for BOTH images (`apps/api/Dockerfile` and
+# `apps/web/Dockerfile` build from the repo ROOT — the API depends on the
+# `@flowboard/shared` workspace package, so neither can build from its own
+# directory).
+#
+# Three jobs, in order of how much they matter:
+#
+# 1. KEEP THE HOST'S node_modules OUT. It holds workspace SYMLINKS and
+#    platform-specific binaries (esbuild, rollup) built for the host OS.
+#    Copying it over a container install is how `tsup: MODULE_NOT_FOUND` and
+#    "you installed esbuild for another platform" happen. This is a
+#    correctness rule, not an optimisation.
+# 2. KEEP SECRETS OUT. `.env` holds real credentials on a developer machine and
+#    would otherwise be baked into an image layer forever. The API image also
+#    sets `NODE_ENV=production` in its release stage, and `config/env.ts` loads
+#    dotenv WITHOUT overriding an already-set variable — so even if a `.env`
+#    reached the image it could not downgrade the runtime to development. Two
+#    independent guards, because that one is worth two.
+# 3. Keep the context small — every ignored path is bytes not sent to the
+#    daemon and a layer not invalidated by an unrelated edit.
+#
+# NOT IGNORED, deliberately:
+#   - `apps/api/drizzle/**` — the generated migrations. `db:migrate` runs from
+#     the image, so a build that dropped them would produce an API that cannot
+#     provision its own database.
+#   - `.npmrc` — carries `node-linker=hoisted`; every install needs it.
+#   - `pnpm-lock.yaml`, `pnpm-workspace.yaml`, every `package.json`.
+#
+# PATTERNS ARE ROOT-ANCHORED. Unlike `.gitignore`, a bare `dist` here matches
+# ONLY `./dist` — not `apps/api/dist`. That is why every nested-able entry is
+# written twice, once bare and once as `**/…`. Verified by copying the context
+# into a scratch image and asserting on what landed; a silent leak here is a
+# workspace symlink or a stale build in a production image.
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules
+**/node_modules
+.pnpm-store
+
+# ── Build outputs (the image builds its own) ─────────────────────────────────
+dist
+**/dist
+build
+**/build
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# ── Tooling caches ───────────────────────────────────────────────────────────
+.turbo
+**/.turbo
+.vitest
+**/.vitest
+
+# ── VCS ──────────────────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+
+# ── Secrets ──────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Test / coverage artifacts ────────────────────────────────────────────────
+coverage
+**/coverage
+test-results
+**/test-results
+playwright-report
+**/playwright-report
+blob-report
+**/blob-report
+.playwright
+**/.playwright
+**/playwright/.cache
+# NOT `e2e/` itself: both Dockerfiles `COPY e2e/package.json`, because
+# `--frozen-lockfile` compares the lockfile's importers against the workspace
+# members it can find and reads a missing one as a stale lockfile.
+e2e/tests
+e2e/playwright.config.ts
+
+# ── Documentation (no build step reads a .md) ────────────────────────────────
+# `.agents/` in particular is a large tree that changes constantly and would
+# invalidate the build context on every doc edit.
+.agents
+docs
+**/*.md
+
+# ── Docker's own files (an image never needs to build itself) ────────────────
+Dockerfile
+**/Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.dev.yml
+
+# ── Editor / OS noise ────────────────────────────────────────────────────────
+.idea
+.vscode
+**/.DS_Store
+**/Thumbs.db
+*.log
+**/*.log

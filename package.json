@@ -1,0 +1,27 @@
+{
+  "name": "flowboard",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.1.2",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "e2e": "pnpm --filter @flowboard/e2e test",
+    "format": "prettier --write \"**/*.{ts,tsx,mjs,json,css,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,mjs,json,css,md,yml,yaml}\"",
+    "db:migrate": "pnpm --filter @flowboard/api db:migrate",
+    "db:seed": "pnpm --filter @flowboard/api db:seed",
+    "db:reset": "pnpm --filter @flowboard/api db:reset"
+  },
+  "devDependencies": {
+    "@flowboard/config": "workspace:*",
+    "prettier": "catalog:",
+    "turbo": "^2.10.12"
+  }
+}

@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+  `lang` and `dir` are PLACEHOLDERS. `src/main.tsx` calls `initLangPolicy()`
+  from `lib/lang-policy.ts` and stamps the real values from the persisted
+  preference BEFORE React mounts, so an Arabic session never renders a frame
+  left-to-right.
+-->
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>FlowBoard</title>
+
+    <!--
+      Typography (design-system.md).
+
+      THE DEFAULTS, always loaded:
+
+      * Inter — the UI face, requested as a VARIABLE range (`wght@300..700`) so
+        weight interpolation is available to the Theme Studio's font presets.
+      * IBM Plex Sans Arabic — the Arabic fallback interposed into every font
+        stack in `index.css` / `theme-tokens.ts`. Requested as STATIC weights
+        (`wght@300;400;500;600;700`), never a variable range: Google's variable
+        build of this family does not cover the full Arabic weight axis reliably
+        across browsers, and a missing axis silently synthesises a faux-bold
+        that breaks the cursive joins. Static instances render correctly.
+      * JetBrains Mono — task keys (`PROJ-123`), the diagnostics log viewer, and
+        anything else that has to line up in a column.
+
+      Those three are the app's own faces — every default stack in `index.css`
+      names one of them — so they load in the BLOCKING link below.
+
+      THE OTHER FIVE FONT PRESETS (WP4.7), in the second, ASYNC link.
+      `theme-presets.ts` offers eight typography presets; five of their families
+      were never requested here at all, so choosing one produced the FALLBACK
+      stack on any machine that did not happen to have the family installed — a
+      picker that silently did nothing. Each preset now carries `bundled: true`,
+      and that flag is only honest because of the second request.
+
+      * IBM Plex Sans — STATIC weights, matching its Arabic sibling above. It is
+        the one preset where a mixed-script line is drawn by two members of one
+        superfamily, and requesting the Latin half as a variable range while the
+        Arabic half is static would make the two disagree at the same nominal
+        weight.
+      * Manrope, DM Sans, Space Grotesk, Source Serif 4, IBM Plex Mono — all
+        variable ranges. `300..700` for the body faces (the widest range the
+        Theme Studio's `hWeight` slider can ask for), `400..600` for the mono,
+        matching JetBrains Mono.
+
+      ── WHY TWO LINKS, AND WHY THE SECOND ONE IS ASYNC ──────────────────────
+
+      A `<link rel="stylesheet">` is RENDER-BLOCKING: the browser will not paint
+      until it arrives. That is the right trade for the three faces the app is
+      actually drawn in — a flash of fallback text on every load is worse than
+      waiting for them. It is emphatically the wrong trade for five families
+      that only matter to a reader who has opened the Theme Studio and chosen
+      one, which is almost nobody, almost never.
+
+      Putting all nine in one blocking link measurably slowed first paint (it
+      was caught by the Wave-4 live pass: page loads that had been instant
+      started timing out under load). `media="print"` makes the second sheet
+      irrelevant to the screen, so the browser fetches it at low priority
+      WITHOUT blocking; the `onload` handler then flips it to `all` and its
+      `@font-face` rules apply. `noscript` covers the scripted-off case — which
+      cannot render this app anyway, but a stylesheet that only works with JS is
+      the kind of thing that is true until it is embarrassing.
+
+      COST OF THE FAMILIES THEMSELVES: near zero either way. `css2` takes every
+      family in ONE request, and Google serves only the `unicode-range` subsets
+      a page actually paints — an English session never downloads the Arabic
+      subset, and a session on Inter never downloads Manrope's glyphs. What the
+      split fixes is the BLOCKING, not the bytes.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300..700&family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400..600&display=swap"
+    />
+    <link
+      rel="stylesheet"
+      media="print"
+      onload="this.media = 'all'"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Manrope:wght@300..700&family=DM+Sans:wght@300..700&family=Space+Grotesk:wght@300..700&family=Source+Serif+4:wght@300..700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Manrope:wght@300..700&family=DM+Sans:wght@300..700&family=Space+Grotesk:wght@300..700&family=Source+Serif+4:wght@300..700&family=IBM+Plex+Mono:wght@300;400;500;600&display=swap"
+      />
+    </noscript>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

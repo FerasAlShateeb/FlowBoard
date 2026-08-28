@@ -1,0 +1,54 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'e2e'
+
+# ── Catalog ────────────────────────────────────────────────────────────────
+# Single source of truth for every version shared by more than one workspace
+# manifest. A manifest opts in with `"<dep>": "catalog:"`, so a bump happens
+# HERE and only here — no drift (e.g. two different vitest majors across
+# api/web/shared, which is exactly how test harnesses silently diverge).
+#
+# Rules for editing this block:
+#   - Only add a dep here once a SECOND package needs it. One-package deps stay
+#     literal in that package's manifest.
+#   - Bump with `pnpm view <pkg> version`, then run the full
+#     `pnpm turbo run build lint typecheck test` gate before committing.
+#
+# Version notes (deliberate, do not "modernise" without re-checking peers):
+#   - typescript is pinned to 5.9.x even though `latest` is 7.0.x. Two hard
+#     blockers, both verified on this machine:
+#       * TS 7 is peer-incompatible with `typescript-eslint@8`, which declares
+#         `typescript: ">=4.8.4 <6.1.0"`. Losing typescript-eslint means losing
+#         the `no-explicit-any` gate, which is a project hard rule.
+#       * TS 6.0.3 (the newest version inside that peer range) turns removed-in-7
+#         options into ERRORS, and `tsup@8`'s `--dts` step injects `baseUrl`
+#         internally: `packages/shared` fails to build with
+#         `TS5101: Option 'baseUrl' is deprecated`.
+#     5.9.3 is the newest release the whole toolchain (tsup, vite, vitest,
+#     typescript-eslint) handles cleanly. Revisit when typescript-eslint ships
+#     TS 7 support AND tsup drops its `baseUrl` injection.
+#   - @types/node tracks the Node MAJOR we actually run (24), not npm `latest`
+#     (26). Types ahead of the runtime advertise APIs that do not exist here.
+catalog:
+  '@eslint/js': ^10.0.1
+  '@types/node': ^24.13.0
+  # Coverage provider for vitest. MUST track vitest's major — @vitest/* packages
+  # are versioned in lockstep with the runner and a mismatch fails at startup,
+  # so this entry and `vitest` below are bumped together or not at all.
+  '@vitest/coverage-v8': ^4.1.11
+  eslint: ^10.9.1
+  eslint-config-prettier: ^10.1.8
+  globals: ^17.11.0
+  prettier: ^3.9.6
+  tsup: ^8.5.1
+  typescript: ~5.9.3
+  typescript-eslint: ^8.68.0
+  vitest: ^4.1.11
+  zod: ^4.4.3
+
+# esbuild ships a prebuilt native binary via its postinstall; tsup and vite both
+# depend on it, so its build script must be allowed to run. pnpm blocks all other
+# dependency lifecycle scripts by default — add entries here only with a reason.
+allowBuilds:
+  esbuild: true

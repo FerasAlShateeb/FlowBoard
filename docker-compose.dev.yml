@@ -1,0 +1,107 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# FlowBoard — DEVELOPMENT compose (Compose Spec, no legacy `version:` key).
+#
+# This file starts ONLY the infrastructure FlowBoard needs — Postgres and MinIO.
+# The API and the web app run natively (`pnpm dev`) for fast HMR and debugging.
+# The full "everything in containers" stack lives in `docker-compose.yml`; the
+# two are isolated (different project name, container names, volumes and host
+# ports) and can run side by side. See docs/docker-guide.md.
+#
+#   docker compose -f docker-compose.dev.yml up -d      # start
+#   docker compose -f docker-compose.dev.yml ps         # check health
+#   docker compose -f docker-compose.dev.yml logs -f    # follow logs
+#   docker compose -f docker-compose.dev.yml down       # stop (keeps data)
+#   docker compose -f docker-compose.dev.yml down -v    # stop AND wipe data
+#
+# Credentials are dev-only literals on purpose: this compose is never exposed
+# beyond localhost, and hard-coding them keeps the quickstart to one command.
+# They match the defaults in `.env.example`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: flowboard-dev
+
+services:
+  # ── Postgres 17 ────────────────────────────────────────────────────────────
+  # The single source of truth for every FlowBoard entity. Drizzle migrations
+  # run against it via `pnpm db:migrate`.
+  postgres:
+    image: postgres:17-alpine
+    container_name: flowboard-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      # Created on first boot of an EMPTY volume only. If you change this later
+      # you must `down -v` (or create the database by hand) for it to take.
+      POSTGRES_DB: flowboard
+    ports:
+      # host:container — 5432 on the host so `DATABASE_URL` in `.env` works
+      # unchanged from a native `pnpm dev`.
+      #
+      # Override with POSTGRES_PORT in `.env` if something else already owns
+      # 5432 (another project's Postgres container is the usual culprit — the
+      # symptom is `Bind for 0.0.0.0:5432 failed: port is already allocated`).
+      # Remember to change the port in DATABASE_URL to match.
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      # Named volume, never an NTFS bind mount: Postgres needs Linux filesystem
+      # semantics (fsync, permissions) that Windows bind mounts do not provide.
+      - flowboard-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `$$` escapes to a single `$` so the shell INSIDE the container expands
+      # the variable rather than Compose expanding it on the host.
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── MinIO (S3-compatible object storage) ───────────────────────────────────
+  # Holds task attachments. The API never proxies file bytes: it issues
+  # presigned PUT/GET URLs and the browser talks to MinIO directly, which is why
+  # port 9000 must be reachable from the host as well as from the API.
+  minio:
+    image: minio/minio:latest
+    container_name: flowboard-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: flowboard
+      MINIO_ROOT_PASSWORD: flowboard-dev-secret
+    ports:
+      - '9000:9000' # S3 API — this is what S3_ENDPOINT points at
+      - '9001:9001' # Web console — http://localhost:9001 (same credentials)
+    volumes:
+      - flowboard-minio-data:/data
+    healthcheck:
+      # MinIO's own liveness probe. `mc` is not available in the server image,
+      # so curl the documented health endpoint instead.
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── One-shot bucket bootstrap ──────────────────────────────────────────────
+  # Runs once after MinIO reports healthy, creates the attachments bucket, then
+  # exits 0. `mc mb --ignore-existing` makes it idempotent, so a restart of the
+  # stack is harmless. `restart: "no"` stops Compose from looping it forever.
+  minio-init:
+    image: minio/mc:latest
+    container_name: flowboard-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    # `minio` resolves on the compose network; the host port mapping is
+    # irrelevant here.
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 flowboard flowboard-dev-secret &&
+      mc mb --ignore-existing local/flowboard-attachments &&
+      echo 'flowboard-attachments bucket ready'
+      "
+    restart: 'no'
+
+volumes:
+  flowboard-postgres-data:
+  flowboard-minio-data:

@@ -1,2 +1,15 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Normalise every text file to LF in the repository and in the working tree.
+# FlowBoard is developed on Windows but built in Linux containers; CRLF leaking
+# into a shell script or a Docker entrypoint breaks the image at runtime.
+* text=auto eol=lf
+
+# Binary assets must never be normalised.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary

@@ -1,0 +1,20 @@
+{
+  "extends": "@flowboard/config/tsconfig.base.json",
+  "compilerOptions": {
+    // The config, the global hook, the provisioning helpers and the server
+    // wrapper all read `process.env` and spawn child processes, so this
+    // workspace opts into the Node ambient types.
+    "types": ["node"],
+    // `page.addInitScript` / `page.evaluate` callbacks are compiled here but RUN
+    // in the browser, so the DOM lib is what types `window` and `localStorage`
+    // inside them. It is a type-level allowance only: nothing in this package
+    // executes in a browser, and the Node types above stay authoritative for
+    // everything outside an evaluate callback.
+    "lib": ["ES2022", "DOM"],
+    // `helpers/env.ts` resolves paths from `import.meta.url` — the ESM
+    // equivalent of `__dirname`, and the only way a helper can find the repo
+    // root without depending on which directory Playwright was started from.
+    "module": "ESNext"
+  },
+  "include": ["playwright.config.ts", "global-setup.ts", "helpers", "scripts", "tests"]
+}

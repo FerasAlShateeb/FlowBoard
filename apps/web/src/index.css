@@ -1,0 +1,394 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+  ===========================================================================
+  FlowBoard token layer — Tailwind v4, CSS-first (there is no tailwind.config).
+  ===========================================================================
+
+  Design direction (plan §Design): **Linear-style minimal**. Dense, dark-FIRST
+  (both modes complete), muted deep-neutral surfaces, subtle ~1px low-contrast
+  borders, exactly ONE strong accent — a refined indigo/violet — and no
+  decorative colour anywhere else.
+
+  THREE LAYERS, in this order:
+
+    1. `:root`  — the complete LIGHT palette + every shared dimension token.
+       This is what the very first paint uses before a single line of JS runs.
+    2. `.dark`  — the complete DARK palette. `applyTheme()` toggles the class on
+       <html>; `useThemeStore` does that at MODULE SCOPE (imported by main.tsx
+       before `createRoot`), so a dark session never flashes light.
+    3. `@theme inline` — republishes the tokens as Tailwind utilities
+       (`bg-background`, `text-muted-foreground`, `rounded-lg`, `font-mono`, …).
+
+  RUNTIME SOURCE OF TRUTH is `components/theme/theme-tokens.ts` → `applyTheme()`,
+  which writes every token as an INLINE custom property on <html>. Inline style
+  beats this stylesheet, so the Theme Studio (Wave 4) can restyle the whole app
+  live without touching CSS. The values below are the byte-for-byte defaults of
+  `DEFAULT_THEME` — change the two together or the pre-paint frame will differ
+  from the post-mount one.
+
+  COLOURS LIVE HERE AND IN theme-tokens.ts, NOWHERE ELSE. Zero hex/oklch
+  literals in components; charts read `--chart-*` only.
+*/
+
+/*
+  Dark mode is a CLASS, not a media query: the user's stored preference has to
+  win over the OS, and `applyTheme()` needs a synchronous, pre-paint switch.
+*/
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* ── Light palette ─────────────────────────────────────────────────────
+     Cool near-neutrals: a whisper of the accent hue (275) runs through every
+     grey so the surfaces feel like one family rather than pure #fff/#000. */
+  --primary: oklch(0.524 0.187 276.2);
+  --primary-fg: oklch(0.99 0 0);
+  --secondary: oklch(0.958 0.004 275);
+  --accent: oklch(0.585 0.126 232);
+  --bg: oklch(0.985 0.002 275);
+  --surface: oklch(1 0 0);
+  --surface-raised: oklch(0.972 0.003 275);
+  --border: oklch(0.914 0.005 275);
+  --text: oklch(0.215 0.014 275);
+  --text-muted: oklch(0.545 0.014 275);
+  --success: oklch(0.588 0.136 150);
+  --warning: oklch(0.702 0.152 74);
+  --danger: oklch(0.577 0.211 26);
+  --info: oklch(0.598 0.132 240);
+  --sidebar-bg: oklch(0.968 0.003 275);
+  --sidebar-active: oklch(0.928 0.024 276);
+  --topbar: oklch(1 0 0);
+  --chart-1: oklch(0.524 0.187 276.2);
+  --chart-2: oklch(0.598 0.132 240);
+  --chart-3: oklch(0.702 0.152 74);
+  --chart-4: oklch(0.588 0.136 150);
+  --chart-5: oklch(0.577 0.185 12);
+
+  /* ── Shared tokens (mode-independent) ──────────────────────────────────
+     Typography. 'IBM Plex Sans Arabic' is interposed as the FALLBACK after
+     every Latin family: font fallback is PER GLYPH, so Latin text keeps
+     resolving from Inter/JetBrains Mono and only the Arabic glyphs — which
+     none of the Latin faces cover — fall through to Plex Arabic. Mirrored in
+     theme-tokens.ts SHARED; change both together. */
+  --font-body: 'Inter', 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, sans-serif;
+  --font-head: 'Inter', 'IBM Plex Sans Arabic', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Sans Arabic', ui-monospace, monospace;
+  --h-weight: 600;
+  --fs-base: 13.5px;
+  --lh: 1.5;
+  --ls: -0.006em;
+
+  /* Geometry. Linear-minimal means SMALL radii — 6px, not 14px. */
+  --radius: 6px;
+  --card-radius: 8px;
+  --btn-radius: 6px;
+  --input-radius: 6px;
+
+  /* Layout dimensions. */
+  --sidebar-w: 232px;
+  --sidebar-wc: 56px;
+  --topbar-h: 48px;
+  --content-max: 1600px;
+  --page-pad: 20px;
+  --card-pad: 16px;
+  --gap: 12px;
+  --row-pad: 8px;
+
+  /* Elevation. Deliberately faint — depth comes from the border, not a drop
+     shadow. `applyTheme()` rewrites these from `shared.shadowLevel`. */
+  --shadow-1: 0 1px 2px 0 oklch(0 0 0 / 0.05);
+  --shadow-2: 0 8px 24px -8px oklch(0 0 0 / 0.14);
+
+  /* One transition duration for all chrome. Keep it short: this is a keyboard
+     -first tool, and an animation you can perceive is an animation in the way. */
+  --speed: 130ms;
+
+  /* ── shadcn variable bridge ────────────────────────────────────────────
+     The hand-copied `components/ui/*` primitives keep their upstream variable
+     names (`bg-background`, `text-muted-foreground`, `border-input`, …) but
+     every one of them resolves to a FlowBoard design token here. That is what
+     makes a Theme Studio preset restyle the primitives for free — no primitive
+     ever names a colour of its own. */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--text);
+  /* `--primary` is shared by both systems: same name, same meaning. */
+  --primary-foreground: var(--primary-fg);
+  --secondary-foreground: var(--text);
+  /* shadcn "muted" is a subtle BACKGROUND; FlowBoard's muted is TEXT. */
+  --muted: var(--secondary);
+  --muted-foreground: var(--text-muted);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--primary-fg);
+  --input: var(--border);
+  --ring: var(--primary);
+  --sidebar: var(--sidebar-bg);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-fg);
+  --sidebar-accent: var(--sidebar-active);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--primary);
+}
+
+/*
+  ── Dark palette ─────────────────────────────────────────────────────────
+  The DEFAULT mode (`useThemeStore` starts `dark: true`). Deep neutral
+  surfaces stepping bg → surface → surface-raised, borders that sit barely
+  above the surface they separate, and the single indigo/violet accent
+  brightened so it carries on a dark ground. Only COLOUR tokens are redeclared
+  — every dimension, font and shadow above is mode-independent.
+*/
+.dark {
+  --primary: oklch(0.662 0.166 278);
+  --primary-fg: oklch(0.16 0.028 278);
+  --secondary: oklch(0.248 0.009 275);
+  --accent: oklch(0.742 0.116 220);
+  --bg: oklch(0.163 0.007 275);
+  --surface: oklch(0.193 0.008 275);
+  --surface-raised: oklch(0.229 0.009 275);
+  --border: oklch(0.281 0.009 275);
+  --text: oklch(0.934 0.004 275);
+  --text-muted: oklch(0.652 0.012 275);
+  --success: oklch(0.742 0.152 152);
+  --warning: oklch(0.812 0.146 79);
+  --danger: oklch(0.681 0.184 24);
+  --info: oklch(0.732 0.121 236);
+  --sidebar-bg: oklch(0.147 0.007 275);
+  --sidebar-active: oklch(0.264 0.031 278);
+  --topbar: oklch(0.163 0.007 275);
+  --chart-1: oklch(0.662 0.166 278);
+  --chart-2: oklch(0.732 0.121 236);
+  --chart-3: oklch(0.812 0.146 79);
+  --chart-4: oklch(0.742 0.152 152);
+  --chart-5: oklch(0.702 0.164 8);
+
+  /* Dark elevation: a black drop shadow on a dark ground is invisible, so it
+     leans on opacity instead of colour. */
+  --shadow-1: 0 1px 2px 0 oklch(0 0 0 / 0.28);
+  --shadow-2: 0 12px 32px -10px oklch(0 0 0 / 0.6);
+}
+
+/*
+  ── Tailwind utility surface ───────────────────────────────────────────────
+  `inline` (rather than a plain `@theme`) is required: the values REFERENCE
+  custom properties that `applyTheme()` rewrites at runtime. Without it Tailwind
+  would snapshot the values at build time and the Theme Studio would be inert.
+*/
+@theme inline {
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: var(--card-radius);
+  --radius-xl: calc(var(--card-radius) + 4px);
+
+  --font-sans: var(--font-body);
+  --font-serif: var(--font-head);
+  --font-mono: var(--font-mono);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  /* shadcn `accent` = the HOVER SURFACE, not FlowBoard's `--accent` hue. The
+     two names collide; the sidebar-active tint is the correct mapping. */
+  --color-accent: var(--sidebar-active);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* FlowBoard-only semantic colours, exposed so `text-success` / `bg-danger`
+     work without an arbitrary `[var(--…)]` value. */
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-brand-accent: var(--accent);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: var(--font-body);
+    /* Keep the scrollbar gutter reserved so opening a tall page does not shift
+       the layout sideways — a real annoyance in a dense board UI. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    font-size: var(--fs-base);
+    line-height: var(--lh);
+    letter-spacing: var(--ls);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-head);
+    font-weight: var(--h-weight);
+    letter-spacing: -0.014em;
+  }
+
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+    font-feature-settings: 'liga' 0;
+  }
+
+  /*
+    Focus. This app is keyboard-first, so the focus ring is a designed element,
+    not a browser default: a 2px accent ring separated from the control by a 2px
+    offset in the page background, which reads on both palettes.
+
+    `:focus-visible` (not `:focus`) so a mouse click never draws it.
+  */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: var(--btn-radius);
+  }
+
+  /*
+    Arabic typography. Two rules, two distinct reasons — see i18n.md:
+
+    1. `letter-spacing: 0`. Arabic is a CURSIVE script: its letters join along a
+       baseline, and any tracking (the Latin default above is a NEGATIVE
+       -0.006em, and a Theme Studio font preset may set a positive one) prises
+       those joins apart into disconnected glyphs. This is a correctness fix.
+    2. A line-height FLOOR of 1.7. Arabic has tall ascenders, deep descenders
+       and stacked diacritics, so the Latin-tuned 1.5 collides between lines.
+       `max()` is a floor, not a replacement: a preset that already asks for
+       more keeps its roomier value.
+
+    Scoped to `html[lang='ar']`, which `lib/lang-policy` stamps alongside `dir`.
+  */
+  html[lang='ar'] body {
+    line-height: max(var(--lh, 1.5), 1.7);
+    letter-spacing: 0;
+  }
+
+  /*
+    Thin, token-driven scrollbars. A dense tool has a LOT of scroll containers
+    (board columns, backlog, log drawer) and the default 15px chrome bars eat
+    real estate and shout. `scrollbar-color` covers Firefox; the ::-webkit rules
+    cover Chromium/WebKit. Both follow the theme, so dark mode needs no extra
+    rule.
+  */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-muted);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /*
+    The one shared surface recipe. `components/ui/card.tsx` renders the exact
+    same box, so a `<Card>` and a `<div class="fb-card">` are interchangeable.
+  */
+  .fb-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: var(--card-pad);
+    box-shadow: var(--shadow-1);
+  }
+
+  /*
+    The login page's ground. A single very wide, very faint radial wash of the
+    accent behind a dark neutral — the Linear sign-in treatment. Token-driven,
+    so it follows the theme (and the Theme Studio) automatically.
+  */
+  .fb-auth-bg {
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(
+        60rem 40rem at 50% -10%,
+        color-mix(in oklch, var(--primary) 16%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(
+        40rem 30rem at 90% 110%,
+        color-mix(in oklch, var(--accent) 10%, transparent),
+        transparent 70%
+      );
+  }
+
+  /*
+    A 1px hairline grid, used at very low opacity over `.fb-auth-bg` to give the
+    otherwise flat wash some texture without shipping a noise bitmap.
+  */
+  .fb-grid-overlay {
+    background-image:
+      linear-gradient(to right, var(--border) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(60rem 40rem at 50% 0%, black, transparent 75%);
+  }
+}
