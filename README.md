@@ -87,7 +87,7 @@ Docker runs FlowBoard's database and file storage inside tidy containers, so
 nothing clutters your computer.
 
 1. Download **Docker Desktop** from
-   <https://www.docker.com/products/docker-desktop/> and run the installer.
+   [https://www.docker.com/products/docker-desktop/](https://www.docker.com/products/docker-desktop/) and run the installer.
 2. On **Windows**, leave **"Use WSL 2"** enabled when asked. If it offers to
    install a WSL2 update, accept it.
 3. **Start Docker Desktop** and wait until its whale icon says it is running.
@@ -97,7 +97,7 @@ nothing clutters your computer.
 
 Node.js runs the app itself.
 
-1. Download the **LTS** installer from <https://nodejs.org/> and run it.
+1. Download the **LTS** installer from [https://nodejs.org/](https://nodejs.org/) and run it.
 2. Accept the defaults.
 
 ### 3. pnpm
@@ -188,7 +188,7 @@ use `pnpm db:reset` instead (that wipes everything and re-seeds).
 pnpm dev
 ```
 
-Leave that terminal open and go to **<http://localhost:5173>** in your browser.
+Leave that terminal open and go to **[http://localhost:5173](http://localhost:5173)** in your browser.
 
 Sign in with the seeded administrator account:
 
@@ -205,13 +205,13 @@ every screen in the order you would meet them.
 
 ## Everyday use
 
-| I want to…                      | Command                                                                                   |
-| ------------------------------- | ----------------------------------------------------------------------------------------- |
-| Start working                   | `docker compose -f docker-compose.dev.yml up -d` then `pnpm dev`                          |
-| Stop working                    | `Ctrl+C` in the `pnpm dev` terminal, then `docker compose -f docker-compose.dev.yml down` |
-| Start over with fresh demo data | `pnpm db:reset`                                                                           |
-| See if the database is healthy  | `docker compose -f docker-compose.dev.yml ps`                                             |
-| Look at the stored files        | <http://localhost:9001> (user `flowboard`, password `flowboard-dev-secret`)               |
+| I want to…                      | Command                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Start working                   | `docker compose -f docker-compose.dev.yml up -d` then `pnpm dev`                                   |
+| Stop working                    | `Ctrl+C` in the `pnpm dev` terminal, then `docker compose -f docker-compose.dev.yml down`          |
+| Start over with fresh demo data | `pnpm db:reset`                                                                                    |
+| See if the database is healthy  | `docker compose -f docker-compose.dev.yml ps`                                                      |
+| Look at the stored files        | [http://localhost:9001](http://localhost:9001) (user `flowboard`, password `flowboard-dev-secret`) |
 
 While `pnpm dev` is running, the app rebuilds itself every time a file changes —
 just refresh the browser.
