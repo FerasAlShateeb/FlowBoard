@@ -16,6 +16,13 @@
  *   - nothing in this package may touch DOM or Node globals (lint-enforced via
  *     `@flowboard/config`'s `sharedPackageConfig`), so it imports cleanly into
  *     the Vite bundle and the Node API process alike.
+ *
+ * ── ROUND 2 FREEZE ──────────────────────────────────────────────────────────
+ * This barrel is a STITCH FILE. W1.0 added every export Round 2 needs
+ * (`instance.schema`, `admin-analytics.schema`) up front, and W3.1 is the only
+ * package allowed to edit it again. W1.1–W1.5 and W2.1–W2.4 add schemas to the
+ * modules already listed below — `export *` carries them out with no change
+ * here — and they do not add, move or rename a line in this file.
  */
 
 // Primitives, query parsers and the validation copy every schema attaches.
@@ -24,6 +31,10 @@ export * from './validation-messages';
 
 // The response envelope every endpoint is wrapped in.
 export * from './envelope';
+
+// Deployment-level configuration (multi-org vs single-org). Upstream of almost
+// everything the shell renders, hence its position here.
+export * from './instance.schema';
 
 // Identity & access.
 export * from './users.schema';
@@ -47,6 +58,9 @@ export * from './reports.schema';
 
 // Platform: analytics, the log drawer, the theme document.
 export * from './telemetry.schema';
+// Downstream of telemetry (it reuses the event vocabulary and the endpoint row)
+// and of projects — see its module header.
+export * from './admin-analytics.schema';
 export * from './diagnostics.schema';
 export * from './theme.schema';
 

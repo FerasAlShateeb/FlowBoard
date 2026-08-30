@@ -1,21 +1,21 @@
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Check, Languages, LogOut, Menu, Moon, PanelLeft, Sun } from 'lucide-react';
+import { Eye, Languages, LogOut, Menu, Moon, PanelLeft, ShieldCheck, Sun } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { cn } from '@/lib/utils';
 import { setLangPref, useLang, type Lang } from '@/lib/lang-policy';
 import { trackThemeChanged } from '@/lib/telemetry-client';
-import { useRouteScope } from '@/hooks/useRouteScope';
 import { useLogout, useMe } from '@/hooks/useAuth';
-import { useOrgs } from '@/hooks/useOrgs';
-import { setLastOrgSlug, useRememberLastOrg } from '@/hooks/useLastOrg';
+import { useRememberLastOrg } from '@/hooks/useLastOrg';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useLayoutStore } from '@/stores/useLayoutStore';
 import { useThemeStore } from '@/stores/useThemeStore';
 import { TopbarSlotZone } from '@/components/layout/TopbarSlots';
+import OrgSwitcher from '@/components/layout/OrgSwitcher';
+import ViewAsPill, { useViewAsSwitch } from '@/components/layout/ViewAsPill';
+import Breadcrumbs, { useCurrentPageTitle } from '@/components/navigation/Breadcrumbs';
 import UserAvatar from '@/components/common/UserAvatar';
-import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -29,17 +29,30 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 /**
- * The 48px top bar: nav toggles, the org switcher, a breadcrumb slot, the
+ * The 48px top bar: nav toggles, the org switcher, the breadcrumb trail, the
  * feature extension zones, and the appearance + account controls.
  *
- * EXTENSION POINT. The three `<TopbarSlotZone/>` elements are how Wave 4
- * features (notification bell, diagnostics toggle, palette trigger) reach the
+ * EXTENSION POINT. The three `<TopbarSlotZone/>` elements are how feature
+ * packages (notification bell, diagnostics toggle, palette trigger) reach the
  * topbar WITHOUT editing this file. See `TopbarSlots.tsx` for the full
  * rationale and the registration contract — that comment is the documentation.
  *
- * ORG SWITCHER (WP2.4) is fed by `useOrgs()` and remembers its choice under
- * `fb-last-org-v1`, which is what lets `/` resume where the user left off
- * rather than always landing on a picker.
+ * ═══ WHAT ROUND 2 CHANGED ══════════════════════════════════════════════════
+ *
+ *  - **The org switcher moved out** to `OrgSwitcher.tsx` and stopped being a
+ *    disabled button for single-org users. It was half of the admin trap; its
+ *    own header explains the rest.
+ *  - **The breadcrumb slot is no longer empty.** It was reserved in Wave 1 for
+ *    "a later wave with resolved names" and the later wave never came back.
+ *    `<Breadcrumbs/>` renders there DIRECTLY rather than registering a slot:
+ *    the trail is not a feature bolted onto the shell, it is the shell's own
+ *    statement of where you are, and it must exist on every route including the
+ *    ones no feature package owns. The `zone="start"` registry stays open for
+ *    the features that do want it.
+ *  - **The mobile `<h1>`** is the last crumb, from the same source — a phone
+ *    has no room for a trail but is still owed the name of the page.
+ *  - **The "viewing as member" pill** sits at the head of the end zone, where a
+ *    warning belongs: before the controls, not buried behind the avatar.
  */
 
 /** Shared icon-button recipe — a 28px square that disappears into the bar. */
@@ -50,11 +63,13 @@ export default function Topbar() {
   const { t } = useTranslation(['common', 'auth']);
   const navigate = useNavigate();
   const lang = useLang();
-  const { orgSlug } = useRouteScope();
+  const pageTitle = useCurrentPageTitle();
+  const { realAdmin, viewingAsMember, switchView } = useViewAsSwitch();
 
   const collapsed = useLayoutStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useLayoutStore((s) => s.toggleSidebar);
   const setMobileNavOpen = useLayoutStore((s) => s.setMobileNavOpen);
+  const setThemeStudioOpen = useLayoutStore((s) => s.setThemeStudioOpen);
 
   const dark = useThemeStore((s) => s.dark);
   const toggleDark = useThemeStore((s) => s.toggleDark);
@@ -66,9 +81,6 @@ export default function Topbar() {
   // `/auth/me` answers a session; the topbar only ever renders its `user` half.
   const user = session?.user ?? storedUser;
   const logout = useLogout();
-
-  const { data: orgs } = useOrgs();
-  const currentOrg = orgs?.find((org) => org.slug === orgSlug) ?? null;
 
   // One observer, high in the tree, catches every `/o/:orgSlug/*` navigation —
   // including a deep link straight to a board, which is exactly the visit worth
@@ -136,12 +148,6 @@ export default function Topbar() {
     trackThemeChanged(dark ? 'light' : 'dark');
   };
 
-  /** Switch organizations: remember the choice, then go to its home. */
-  const chooseOrg = (slug: string) => {
-    setLastOrgSlug(slug);
-    void navigate(`/o/${slug}`);
-  };
-
   return (
     <header
       data-testid="topbar"
@@ -169,74 +175,46 @@ export default function Topbar() {
         <PanelLeft className="size-4" />
       </button>
 
-      {/* Org switcher, fed by `qk.orgs.mine()`. A plain button (not a menu)
-          when the user belongs to a single org: a dropdown with one item is a
-          click that teaches nothing. */}
-      {orgs && orgs.length > 1 ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="max-w-[12rem] gap-1.5 font-medium"
-              data-testid="org-switcher"
-              aria-label={t('common:nav.switchOrg')}
-            >
-              <Building2 className="size-3.5" aria-hidden />
-              <span className="truncate">
-                {currentOrg?.name ?? orgSlug ?? t('common:nav.noOrganization')}
-              </span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-56">
-            <DropdownMenuLabel>{t('common:nav.switchOrg')}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {orgs.map((org) => (
-              <DropdownMenuItem
-                key={org.id}
-                onSelect={() => {
-                  chooseOrg(org.slug);
-                }}
-              >
-                <Building2 aria-hidden />
-                <span className="truncate">{org.name}</span>
-                {org.slug === orgSlug ? <Check className="ms-auto size-3.5" aria-hidden /> : null}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="max-w-[12rem] gap-1.5 font-medium"
-          data-testid="org-switcher"
-          aria-label={t('common:nav.switchOrg')}
-          disabled={!currentOrg}
-          onClick={() => {
-            if (currentOrg) chooseOrg(currentOrg.slug);
-          }}
-        >
-          <Building2 className="size-3.5" aria-hidden />
-          <span className="truncate">
-            {currentOrg?.name ?? orgSlug ?? t('common:nav.noOrganization')}
-          </span>
-        </Button>
-      )}
+      <OrgSwitcher />
 
       {/*
-        BREADCRUMB SLOT. Left empty in Wave 1 — a breadcrumb needs resolved
-        names (project title, task summary) that only WP2.4's hooks can supply.
-        Features that want to contribute to the START of the bar register a
-        `zone: 'start'` slot rather than editing this file.
+        THE TRAIL. `<Breadcrumbs/>` renders here directly; the `zone="start"`
+        registry stays open after it for feature packages that want to sit
+        beside the trail. Desktop only — the `<h1>` below is the phone's answer
+        to the same question.
+
+        A `<div>`, not a `<nav>`: W3.1 moved the trail onto `ui/breadcrumb`, and
+        that primitive's `<Breadcrumb>` IS the `<nav>` (it carries the same
+        `common:nav.breadcrumb` accessible name). Keeping one here would nest a
+        landmark inside a landmark — and would put the slot registry, which is
+        not part of the trail, inside the trail's own navigation region.
       */}
-      <nav
-        aria-label={t('common:nav.breadcrumb')}
+      <div
         data-testid="breadcrumb-slot"
         className="hidden min-w-0 flex-1 items-center gap-1 md:flex"
       >
+        <Breadcrumbs />
         <TopbarSlotZone zone="start" />
-      </nav>
+      </div>
+
+      {/*
+        The mobile page title — the last crumb, from the same builder, so the
+        two surfaces can never disagree about what this page is called.
+
+        NOT an `<h1>`, deliberately, even though GameDash's port is one:
+        `common/PageHeader` already renders the page's real `h1` (and its own
+        comment commits to being the ONLY one). A second `h1` naming the same
+        page would give every mobile screen two competing document outlines. It
+        stays a `span` — visible context while the content scrolls, and no new
+        landmark for a screen reader that already has the heading below it.
+      */}
+      <span
+        dir="auto"
+        data-testid="topbar-page-title"
+        className="min-w-0 flex-1 truncate text-sm font-semibold md:hidden"
+      >
+        {pageTitle}
+      </span>
 
       {/* Centre zone: the command-palette trigger lands here (WP4.6). */}
       <div className="flex items-center gap-1">
@@ -244,6 +222,8 @@ export default function Topbar() {
       </div>
 
       <div className="ms-auto flex items-center gap-1">
+        <ViewAsPill />
+
         {/* End zone: notification bell (WP4.2), diagnostics toggle (WP4.4). */}
         <TopbarSlotZone zone="end" />
 
@@ -328,13 +308,52 @@ export default function Topbar() {
             >
               {t('common:nav.profile')}
             </DropdownMenuItem>
+            {/*
+              THE DRAWER, NOT THE PAGE (W3.1).
+
+              Round 2 made the Theme Studio a slide-over: it applies live over
+              whatever you are looking at, which is the whole point of choosing
+              a theme — you judge it against a real board, not against an empty
+              settings page. Navigating away to `/theme` threw that context out
+              and, worse, threw away the user's place in the app for a decision
+              they usually reverse in ten seconds.
+
+              `/theme` still exists as the ADVANCED editor (the raw token table
+              plus its dirty-state guard) and the drawer's footer links to it,
+              so nothing became unreachable — the default door just stopped
+              being the deep one.
+            */}
             <DropdownMenuItem
+              data-testid="user-menu-theme"
               onSelect={() => {
-                void navigate('/theme');
+                setThemeStudioOpen(true);
               }}
             >
               {t('common:nav.theme')}
             </DropdownMenuItem>
+
+            {/*
+              THE VIEW SWITCH — gated on the REAL admin flag, never the
+              effective one. Gating it on `isEffectiveGlobalAdmin()` would make
+              the control that turns member view OFF disappear the instant it
+              was turned on, which is a one-way door with a `localStorage` key
+              behind it. (The pill is the other way back; both must work.)
+            */}
+            {realAdmin ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  data-testid="view-as-toggle"
+                  onSelect={() => {
+                    switchView(!viewingAsMember);
+                  }}
+                >
+                  {viewingAsMember ? <ShieldCheck /> : <Eye />}
+                  {viewingAsMember ? t('common:nav.viewAsAdmin') : t('common:nav.viewAsMember')}
+                </DropdownMenuItem>
+              </>
+            ) : null}
+
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" disabled={logout.isPending} onSelect={signOut}>
               <LogOut />

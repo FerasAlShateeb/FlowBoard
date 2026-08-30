@@ -110,6 +110,31 @@ export function removeSocket(socketId: string): string[] {
   return affected;
 }
 
+/**
+ * Empty ONE project's roster, whoever is in it — the org-archive path (R2 W3.5).
+ *
+ * `removeSocket` empties a socket across projects; this is the other axis. It
+ * exists because archiving an organization evicts every socket from that org's
+ * project rooms at once (`sockets/realtime-bridge.ts` → `org.archived`), and the
+ * roster is a `Map` rather than a projection of the Socket.IO rooms: leaving the
+ * rooms without this would leave every evicted tab listed as "present" in a
+ * project nobody can open any more.
+ *
+ * Both indexes are maintained, like every other mutator here — dropping the
+ * project's map alone would leave `socketProjects` pointing at a room that no
+ * longer exists, and the next disconnect would try to broadcast a roster for it.
+ *
+ * @returns the socket ids that were removed, so a caller can decide whether
+ * anything happened at all.
+ */
+export function clearProjectPresence(projectId: string): string[] {
+  const room = byProject.get(projectId);
+  if (!room) return [];
+  const socketIds = [...room.keys()];
+  for (const socketId of socketIds) removePresence(projectId, socketId);
+  return socketIds;
+}
+
 /** The projects a socket is currently present in. */
 export function presenceProjectsOf(socketId: string): string[] {
   return [...(socketProjects.get(socketId) ?? [])];

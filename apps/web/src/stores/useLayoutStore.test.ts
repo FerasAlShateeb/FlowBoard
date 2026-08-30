@@ -9,6 +9,7 @@ import {
   DIAG_WIDTH_DEFAULT,
   DIAG_WIDTH_MIN,
   isSideDock,
+  LAYOUT_STORAGE_KEY,
   useLayoutStore,
   type DiagDock,
 } from '@/stores/useLayoutStore';
@@ -136,5 +137,41 @@ describe('open state', () => {
     expect(useLayoutStore.getState().diagOpen).toBe(true);
     expect(useLayoutStore.getState().paletteOpen).toBe(false);
     expect(useLayoutStore.getState().mobileNavOpen).toBe(false);
+  });
+});
+
+/**
+ * The Theme Studio drawer's flag (Round 2 §Theme D5). It is the OPPOSITE case
+ * to `diagOpen` above: a modal panel, so Escape closes it — and an ephemeral
+ * one, so a reload never restores it over the app.
+ */
+describe('themeStudioOpen', () => {
+  it('starts closed and is set explicitly', () => {
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+
+    useLayoutStore.getState().setThemeStudioOpen(true);
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(true);
+
+    useLayoutStore.getState().setThemeStudioOpen(false);
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+  });
+
+  it('closes with every other MODAL overlay on closeAllOverlays', () => {
+    useLayoutStore.setState({ themeStudioOpen: true, diagOpen: true });
+
+    useLayoutStore.getState().closeAllOverlays();
+
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+    // …and still not the non-modal devtools drawer.
+    expect(useLayoutStore.getState().diagOpen).toBe(true);
+  });
+
+  it('is never persisted — an open modal is not a preference', () => {
+    useLayoutStore.setState({ themeStudioOpen: true, sidebarCollapsed: true });
+
+    const raw = localStorage.getItem(LAYOUT_STORAGE_KEY) ?? '{}';
+
+    expect(JSON.parse(raw)).toMatchObject({ state: { sidebarCollapsed: true } });
+    expect(raw).not.toContain('themeStudioOpen');
   });
 });

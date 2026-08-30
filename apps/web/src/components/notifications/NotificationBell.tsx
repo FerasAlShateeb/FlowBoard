@@ -73,6 +73,25 @@ export function NotificationBell() {
           <Bell className="size-4" aria-hidden />
           {unreadCount > 0 ? (
             <span
+              // THE POP IS RETRIGGERED BY THE KEY, NOT BY A LISTENER.
+              //
+              // A CSS animation runs once when the element enters the DOM and
+              // never again; the badge, however, persists across counts (3 → 4
+              // is the same element). Keying it on the count makes React unmount
+              // and remount it on every change, which restarts `fb-badge-pop`
+              // from frame zero — the only retrigger mechanism that needs no
+              // JavaScript at all. The element is a 16px span with no state, so
+              // remounting it is free.
+              //
+              // THIS IS ALSO ITS OWN REDUCED BRANCH. `index.css` §B1 declares
+              // the `fb-badge-pop` animation ONLY under
+              // `:where(html[data-motion='reduced'])`'s opposite —
+              // `html[data-motion='full']` — so under Reduced the class matches
+              // no rule and the remount is visually inert. Nothing here reads
+              // the policy, and nothing needs to: the count is fully legible on
+              // every frame either way, and it is carried in the button's
+              // accessible name regardless of what the badge does.
+              key={unreadCount}
               aria-hidden
               data-testid="notification-badge"
               className={cn(
@@ -80,6 +99,8 @@ export function NotificationBell() {
                 // Logical inset: the badge sits on the reading-END corner, so it
                 // mirrors with the rest of the bar under RTL.
                 '-end-0.5',
+                // Registry entry #3 — see `lib/motion-registry.ts`.
+                'fb-badge-pop',
               )}
             >
               {unreadCount > BADGE_CAP ? t('notifications:bell.overflow') : unreadCount}

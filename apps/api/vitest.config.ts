@@ -18,6 +18,24 @@ export default defineConfig({
      * files would race each other's fixtures, so files run sequentially.
      */
     fileParallelism: false,
+    /**
+     * 30s for HOOKS, default (5s) for tests.
+     *
+     * Vitest's 10s hook default assumes a `beforeEach` that wires up objects.
+     * These suites' hooks do real I/O: `truncateAllTables()` is a `TRUNCATE`
+     * across every table in the schema, and the socket suites additionally boot
+     * an HTTP server and a Socket.IO server per test. `realtime-bridge.test.ts`
+     * pays for both, thirty-plus times in one file.
+     *
+     * That is comfortably under 10s on an idle machine and NOT under load —
+     * `turbo run test` schedules `@flowboard/api` alongside `@flowboard/web`'s
+     * 2 500-test suite, and the gate failed twice in that hook while the two
+     * competed for cores. A hook timeout is a deadline on setup, not an
+     * assertion, so raising it loses nothing: a genuinely hung hook still fails,
+     * three times slower. The TEST timeout is deliberately left alone — that one
+     * IS an assertion about how long the product may take to answer.
+     */
+    hookTimeout: 30_000,
     env: {
       NODE_ENV: 'test',
       LOG_LEVEL: 'fatal',

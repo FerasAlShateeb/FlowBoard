@@ -23,6 +23,7 @@ export {
   addMemberInputSchema,
   createOrgInputSchema,
   orgDetailSchema,
+  orgListQuerySchema,
   updateMemberInputSchema,
   updateOrgInputSchema,
   userListQuerySchema,
@@ -31,7 +32,9 @@ export {
 export type {
   AddMemberInput,
   CreateOrgInput,
+  OrgAdminRow,
   OrgDetail,
+  OrgListQuery,
   UpdateMemberInput,
   UpdateOrgInput,
   UserListQuery,

@@ -20,12 +20,44 @@ import * as schema from './schema';
  * FlowBoard's dev compose talks to Postgres directly, but this is a
  * deploy-topology decision that must not be discovered in production; the cost
  * is one extra parse per query, which is noise next to the network round-trip.
+ *
+ * ═══ `TimeZone: 'UTC'` — WHY THE SESSION IS PINNED (R2 W3.5) ════════════════
+ *
+ * `date_trunc(unit, timestamptz)` is NOT absolute. Postgres converts the value
+ * into the SESSION's `TimeZone` first, truncates there, and converts back — so
+ * the same instant lands in a different day bucket depending on a setting the
+ * query never mentions. Every analytics and telemetry series in the product is
+ * built that way (`admin-analytics.service.ts`'s `windowCte`,
+ * `admin-telemetry.service.ts`'s `requestsOverTime` and `eventsOverTime`), and
+ * the API deliberately speaks UTC everywhere else: the contract's instants are
+ * `isoDateTime`, the web resolves its windows in UTC, and `startOfUtcDay` in the
+ * telemetry service computes today's boundary in Node.
+ *
+ * Without this pin the boundary depends on the SERVER's `timezone` GUC — which
+ * is whatever the image, the managed provider or a `postgresql.conf` says.
+ * FlowBoard's own compose image happens to be UTC, so the bug is invisible in
+ * development and appears only on a deployment whose database is set to, say,
+ * `America/New_York`: every daily bucket would silently start at 05:00Z and the
+ * "today" tile would disagree with the chart beside it by five hours.
+ *
+ * IT IS PINNED HERE RATHER THAN PASSED PER CALL. The alternative is
+ * `date_trunc(unit, ts, 'UTC')` at each of the six call sites, which fixes the
+ * queries that exist and none of the ones a later wave writes — and this is a
+ * connection-level property with a connection-level home. `connection` sends the
+ * value as a startup parameter, so EVERY backend the pool opens (including ones
+ * opened later to grow the pool) carries it; there is no `SET` to forget on a
+ * reconnect.
+ *
+ * Nothing else in the app is sensitive to it: `timestamptz` values are absolute
+ * and postgres-js parses them into `Date` regardless of the session zone, and
+ * the `date` columns (a sprint's planned window) carry no zone at all.
  */
 const queryClient = postgres(env.DATABASE_URL, {
   max: 10,
   idle_timeout: 20,
   connect_timeout: 10,
   prepare: false,
+  connection: { TimeZone: 'UTC' },
 });
 
 export const db = drizzle(queryClient, { schema });

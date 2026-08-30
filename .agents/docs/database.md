@@ -7,7 +7,8 @@ service layer imports it.
 ```
 apps/api/
 ├── drizzle.config.ts          # drizzle-kit config (generate only)
-├── drizzle/                   # 0000_initial_schema.sql + meta/_journal.json
+├── drizzle/                   # 0000_initial_schema.sql · 0001_instance_settings.sql
+│                              # + meta/_journal.json
 └── src/
     ├── db/
     │   ├── client.ts          # pool, `db`, `Tx`, `withTx`, `closeDb`
@@ -17,16 +18,22 @@ apps/api/
     │   └── schema/
     │       ├── index.ts       # re-exports every table — drizzle-kit's entry point
     │       ├── enums.ts       users.ts   orgs.ts     teams.ts    projects.ts
+    │       ├── instance-settings.ts      # the deployment singleton
     │       ├── workflow.ts    sprints.ts tasks.ts    comments.ts
     │       └── activity.ts    notifications.ts       telemetry.ts
     └── scripts/               # migrate.ts · seed.ts · reset.ts
                                # + seed-utils.ts (pure helpers) · script-logger.ts
 ```
 
-**There is exactly one migration so far**: `drizzle/0000_initial_schema.sql`,
-the single entry in `drizzle/meta/_journal.json` (journal `version: 7`). Every
-table, index, enum and check described below ships in that one file — nothing in
-this document describes an unapplied change.
+**There are two migrations**, both entries in `drizzle/meta/_journal.json`
+(journal `version: 7`):
+
+| File                         | What it adds                                                                                                                                                      |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0000_initial_schema.sql`    | Every table, index, enum and check below except the next row. Hand-edited to prepend `CREATE EXTENSION pg_trgm`.                                                  |
+| `0001_instance_settings.sql` | `instance_settings`, the multi-org / single-org singleton. Hand-edited to append an idempotent `INSERT … ON CONFLICT DO NOTHING` for row 1 — see the file's note. |
+
+Nothing in this document describes an unapplied change.
 
 ---
 
@@ -59,6 +66,12 @@ changes without a deliberate edit.
   is `ON DELETE RESTRICT`, so the database refuses too).
 - **Users are never deleted.** Deactivate: `is_active = false` **and** bump
   `token_version`, which invalidates every outstanding access and refresh token.
+  `DELETE /api/admin/users/:userId` is an **anonymize**, not a delete: the row
+  survives with `name = 'Deleted user'`, the address rewritten to a unique
+  `deleted+<uuid>@flowboard.invalid` (the column is NOT NULL and unique on
+  `lower(email)`, so it cannot be nulled), the avatar cleared, `is_active` false,
+  `token_version` bumped, and every `org_members` / `project_members` row
+  removed. Comments, activity and assignments keep pointing at a real row.
 - Deleting a task cascades to its **subtasks** (`parent_id` is `ON DELETE
 CASCADE`) but not to its epic children (`epic_id` is `ON DELETE SET NULL`).
 
@@ -95,6 +108,9 @@ those import cycles are harmless — an eager one across a cycle would resolve t
   then fails the whole feed request with a 422. Do not confuse these with the
   SOCKET event names (`comment:created`), which are a separate vocabulary.
 - **`users.locale`** is `text` — adding Arabic-plus-one should not be DDL.
+- **`instance_settings.org_mode`** is `text`, validated by the shared
+  `orgModeSchema` on every read. A third deployment shape must not be a
+  migration, and the column has exactly one writer.
 
 ---
 
@@ -109,6 +125,7 @@ those import cycles are harmless — an eager one across a cycle would resolve t
 | `org_members`            | PK `(org_id, user_id)` + `org_role`. Extra index on `user_id` for the org switcher.                                                                                                                                                                                                                                                          |
 | `invites`                | Opaque `token`, optional email lock, optional **direct project grant** (`project_id` + `project_role` are all-or-nothing, check-constrained), `expires_at`, and the acceptance stamps `accepted_at` / `accepted_by_id` — invite _status_ is derived from those two plus `expires_at`, never stored. `invited_by_id` is `ON DELETE SET NULL`. |
 | `teams` / `team_members` | People grouping, not a permission boundary. Team names are unique per org **among live rows**.                                                                                                                                                                                                                                               |
+| `instance_settings`      | The deployment SINGLETON: `id` is an `integer` pinned to 1 by a check, plus `org_mode` (`'multi'`/`'single'`, plain `text` parsed by the shared `orgModeSchema`), a nullable `default_org_id` (`ON DELETE SET NULL`) and `instance_name`. Written by `services/instance-settings.service.ts`, which also ensures the row lazily.             |
 
 ### Projects & workflow
 
@@ -170,7 +187,9 @@ columns (base-62 keys from the `fractional-indexing` package's
 
 ## Indexes worth knowing
 
-The schema declares **40 indexes**. This section covers the ones whose shape
+The schema declares **41 indexes** (count them with
+`grep -hoE "(uniqueIndex|index)\('[a-z_0-9]+'" apps/api/src/db/schema/*.ts | sort -u | wc -l`).
+This section covers the ones whose shape
 encodes a decision; the rest are the obvious "the PK cannot serve this
 direction" reverse lookups (`org_members_user_idx`, `team_members_user_idx`,
 `project_members_user_idx`, `task_labels_label_idx`, `task_watchers_user_idx`,
@@ -229,11 +248,12 @@ DESC) WHERE read_at IS NULL` — partial, because the unread set stays tiny whil
 
 ### Check constraints
 
-**Sixteen, and the shipped list is exactly this:**
+**Seventeen, and the shipped list is exactly this:**
 
 | Constraint                           | Enforces                                                                                     |
 | ------------------------------------ | -------------------------------------------------------------------------------------------- |
 | `organizations_slug_format`          | `^[a-z0-9](-?[a-z0-9]+)*$`                                                                   |
+| `instance_settings_singleton`        | `id = 1` — one configuration row, enforced by the database rather than by convention         |
 | `projects_key_format`                | `^[A-Z][A-Z0-9]{1,9}$`                                                                       |
 | `projects_task_counter_non_negative` | `task_counter >= 0`                                                                          |
 | `invites_project_grant_complete`     | `(project_id IS NULL) = (project_role IS NULL)`                                              |
@@ -327,16 +347,17 @@ any of these scripts — never point `db:reset` or `db:seed` at it. See
 Deterministic (one seeded LCG — same data every run), sized so that **no view and
 no chart renders empty**:
 
-|          |                                                                                                                                                                                                                                                                                                                              |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Sign-in  | `admin@flowboard.dev` / `admin1234` (global admin) — every other account uses `password1234`                                                                                                                                                                                                                                 |
-| People   | 9 users: a global admin, a **non-global org admin**, a **viewer**, an Arabic-locale account, one **deactivated** account                                                                                                                                                                                                     |
-| Org      | `acme` — 2 teams, 3 invites (open / project-granting / expired)                                                                                                                                                                                                                                                              |
-| Projects | **FLOW** — default 3-column workflow, **zero** transition rows (everything allowed). **CORE** — custom 5-column workflow, a transition whitelist, and a WIP limit of 3 on "In Progress" that the seed sits exactly at                                                                                                        |
-| Tasks    | 61 across both projects (**38 FLOW · 23 CORE**): all five types, epics with children, subtasks, 7 dependency edges (a 4-link chain plus independent pairs), 52 label links, 120 watcher rows of which exactly **one is muted**, varied priorities and points, dates spanning past and future                                 |
-| Sprints  | FLOW: one **completed** (points stamped, tasks resolved inside the window), one **active**, one **planned**. CORE: one active. Plus a backlog remainder                                                                                                                                                                      |
-| Talk     | 34 comments including one `@[Sara Novak](userId)` mention                                                                                                                                                                                                                                                                    |
-| Streams  | **210** activity rows (one `task.created` per task, an assignment row, one per status hop, one `comment.added` per comment), 5 notifications (read and unread), **200** telemetry events over 14 days across **11** types, **500** request logs over 7 days with varied route patterns, status codes and a latency long tail |
+|          |                                                                                                                                                                                                                                                                                                                                                                        |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Sign-in  | `admin@flowboard.dev` / `admin1234` (global admin) — every other account uses `password1234`                                                                                                                                                                                                                                                                           |
+| People   | 10 users: a global admin, a **non-global org admin**, a **viewer**, an Arabic-locale account, one **deactivated** account, and one who belongs to Globex ONLY                                                                                                                                                                                                          |
+| Instance | 1 `instance_settings` row — `orgMode: 'multi'`, no default org. W3.1 flips this one row to walk the single-org path                                                                                                                                                                                                                                                    |
+| Orgs     | **Two**, so every cross-organization surface has more than one row. `acme` — 9 members, 2 teams, 3 invites (open / project-granting / expired). `globex` — 5 members (4 shared with Acme, 1 its own), no teams, 4 invites of which **2 are accepted** so the growth acceptance rate is not zero                                                                        |
+| Projects | **FLOW** — default 3-column workflow, **zero** transition rows (everything allowed). **CORE** — custom 5-column workflow, a transition whitelist, and a WIP limit of 3 on "In Progress" that the seed sits exactly at. **GX** and **OPS** (Globex) — both the default workflow                                                                                         |
+| Tasks    | 90 (**38 FLOW · 23 CORE · 17 GX · 12 OPS**): all five types, epics with children, subtasks, 7 dependency edges (a 4-link chain plus independent pairs), label links, watcher rows of which exactly **one is muted**, varied priorities and points, dates spanning past and future                                                                                      |
+| Sprints  | 7. FLOW: one **completed** (points stamped, tasks resolved inside the window), one **active**, one **planned**. CORE: one active. GX: one completed + one active. OPS: one active. Plus a backlog remainder in each project                                                                                                                                            |
+| Talk     | 50 comments including one `@[Sara Novak](userId)` mention                                                                                                                                                                                                                                                                                                              |
+| Streams  | **306** activity rows (one `task.created` per task, an assignment row, one per status hop, one `comment.added` per comment attributed to its own author), 5 notifications (read and unread), **260** telemetry events over 14 days across **11** types and **both** organizations, **500** request logs over 7 days with varied route patterns and a latency long tail |
 
 Attachments are deliberately **not** seeded: rows without matching MinIO objects
 would give the UI broken download links.
@@ -406,5 +427,14 @@ Layering rule: **`routes → controllers → services → db`.** Controllers and
 must never import `src/db`.
 
 ---
+
+## Related docs
+
+- [architecture.md](./architecture.md) — the layering rule and its three exceptions.
+- [admin.md](./admin.md) — `instance_settings`, single-org mode, and the
+  anonymize-delete this document's soft-delete section summarises.
+- [coding-standards.md](./coding-standards.md) — `withTx`, the `Executor` pattern
+  and the mutation trio.
+- [../workflows/db-migration.md](../workflows/db-migration.md) — the procedure.
 
 Back to [docs/INDEX.md](./INDEX.md) · [.agents/INDEX.md](../INDEX.md)

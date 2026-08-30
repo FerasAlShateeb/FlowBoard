@@ -31,25 +31,37 @@
  *     `projectsRouter` owns `/projects` and mounts `workflowRouter` on the bare
  *     `/:projectId`. That sub-router only claims `/statuses` and
  *     `/transitions`, so everything else falls through.
- *   - `/admin` carries THREE routers: `/admin/users`, `/admin/telemetry` and
- *     the bare `/admin` (logs). The two narrow mounts MUST precede the bare
- *     one — not because `adminLogsRouter` would shadow them today (it declares
- *     only `/logs`), but because the bare mount is the one a future catch-all
- *     would be added to, and by then the ordering would be load-bearing and
+ *   - `/admin` carries SIX routers: `/admin/users`, `/admin/telemetry`,
+ *     `/admin/analytics`, `/admin/projects`, `/admin/settings` and the bare
+ *     `/admin` (logs). The five narrow mounts MUST precede the bare one — not
+ *     because `adminLogsRouter` would shadow them today (it declares only
+ *     `/logs`), but because the bare mount is the one a future catch-all would
+ *     be added to, and by then the ordering would be load-bearing and
  *     unexplained.
  *
  * The cost of a fall-through is one extra `requireAuth` (a JWT verify, no I/O)
  * on those paths, which is cheaper than duplicating the mount tree.
+ *
+ * ── ROUND 2 ─────────────────────────────────────────────────────────────────
+ * This registry is a STITCH FILE. W1.0 mounted every router Round 2 needs —
+ * `admin-analytics`, `admin-projects` and `instance-settings` among them —
+ * with their guards, carrying `501 not_implemented` bodies until W1.1 and W1.2
+ * filled in the handlers INSIDE those router files without touching a mount
+ * here. Every one of those bodies is now real, so W3.1 deleted the shared
+ * `stub-handler` module along with the seam it existed to hold open.
  */
 import { Router } from 'express';
 
+import { adminAnalyticsRouter } from './admin-analytics.routes';
 import { adminLogsRouter } from './admin-logs.routes';
+import { adminProjectsRouter } from './admin-projects.routes';
 import { adminTelemetryRouter, telemetryIngestRouter } from './admin-telemetry.routes';
 import { adminUsersRouter } from './admin-users.routes';
 import { attachmentsRouter } from './attachments.routes';
 import { authRouter } from './auth.routes';
 import { commentsRouter } from './comments.routes';
 import { healthRouter } from './health.routes';
+import { adminSettingsRouter, instanceConfigRouter } from './instance-settings.routes';
 import { invitesRouter } from './invites.routes';
 import { notificationsRouter } from './notifications.routes';
 import { orgsRouter } from './orgs.routes';
@@ -71,6 +83,17 @@ apiRouter.use('/orgs/:orgId/invites', invitesRouter);
 apiRouter.use('/notifications', notificationsRouter);
 apiRouter.use('/admin/users', adminUsersRouter);
 apiRouter.use('/admin/telemetry', adminTelemetryRouter);
+
+// ── Instance administration & analytics (Round 2) ────────────────────────────
+// All four are NARROW mounts on `/admin` and therefore precede the bare one
+// below. `/instance` is the odd one out on purpose: `GET /instance/config` is
+// read by every signed-in session on boot, so it is guarded by `requireAuth`
+// alone and cannot live under `/admin`. See `instance-settings.routes.ts`.
+apiRouter.use('/admin/analytics', adminAnalyticsRouter);
+apiRouter.use('/admin/projects', adminProjectsRouter);
+apiRouter.use('/admin/settings', adminSettingsRouter);
+apiRouter.use('/instance', instanceConfigRouter);
+
 apiRouter.use('/admin', adminLogsRouter);
 
 // ── Telemetry ingest (WP4.3) ────────────────────────────────────────────────
@@ -96,13 +119,17 @@ apiRouter.use('/', reportsRouter);
 apiRouter.use('/', taskActivityRouter);
 
 export {
+  adminAnalyticsRouter,
   adminLogsRouter,
+  adminProjectsRouter,
+  adminSettingsRouter,
   adminTelemetryRouter,
   adminUsersRouter,
   attachmentsRouter,
   authRouter,
   commentsRouter,
   healthRouter,
+  instanceConfigRouter,
   invitesRouter,
   notificationsRouter,
   orgsRouter,

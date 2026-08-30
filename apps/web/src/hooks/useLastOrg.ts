@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import type { OrgWithRole } from '@flowboard/shared';
+import type { OrgMode, OrgWithRole } from '@flowboard/shared';
 
 import { useRouteScope } from '@/hooks/useRouteScope';
 
@@ -49,10 +49,27 @@ export function clearLastOrgSlug(): void {
   }
 }
 
+/** Where `/` sends someone: an org, the picker, or "not decidable yet". */
+export type HomeTarget = { kind: 'org'; slug: string } | { kind: 'picker' };
+
 /**
  * Chooses where `/` should send someone.
  *
- * The ladder, and the reasoning for each rung:
+ * ═══ SINGLE-ORG MODE SHORT-CIRCUITS, AND DOES NOT WAIT ═════════════════════
+ *
+ * A single-org deployment has exactly one workspace, so `/` is never a choice —
+ * it is a redirect, and it can be decided from the instance config ALONE. That
+ * is why this rung runs before the `!orgs` guard: making a single-org install
+ * hold `/` on a spinner until `GET /orgs` returns would be a request spent
+ * confirming something the config already said.
+ *
+ * The zero-org case is real and must not be assumed away: a freshly installed
+ * instance is in single mode with `defaultOrgSlug: null` until an admin creates
+ * the first organization. That falls through to the picker, which renders the
+ * empty state (and, for an effective admin, the create CTA).
+ *
+ * ═══ MULTI MODE: THE ORIGINAL LADDER, UNCHANGED ════════════════════════════
+ *
  *   1. **The remembered org, if they are still in it** — the common case, and
  *      the only one that feels like the app resumed rather than restarted. The
  *      membership re-check is what makes a removed member land on the picker
@@ -67,7 +84,13 @@ export function clearLastOrgSlug(): void {
 export function resolveHomeTarget(
   orgs: readonly OrgWithRole[] | undefined,
   lastSlug: string | null,
-): { kind: 'org'; slug: string } | { kind: 'picker' } | null {
+  defaultOrgSlug: string | null = null,
+  orgMode: OrgMode = 'multi',
+): HomeTarget | null {
+  if (orgMode === 'single') {
+    return defaultOrgSlug === null ? { kind: 'picker' } : { kind: 'org', slug: defaultOrgSlug };
+  }
+
   if (!orgs) return null;
   if (orgs.length === 0) return { kind: 'picker' };
 

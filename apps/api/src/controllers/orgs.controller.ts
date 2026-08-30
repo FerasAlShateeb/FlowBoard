@@ -14,6 +14,7 @@ import { respond, respondNoContent } from '../utils/respond';
 import type {
   AddOrgMemberBody,
   CreateOrgBody,
+  OrgListQuery,
   OrgMemberParams,
   OrgParams,
   OrgUserListQuery,
@@ -21,10 +22,19 @@ import type {
   UpdateOrgMemberBody,
 } from '../validation/orgs.validation';
 
-/** `GET /api/orgs` — every org the caller can reach, with their role in it. */
+/**
+ * `GET /api/orgs?q=&scope=&includeDeleted=` — every org the caller can reach.
+ *
+ * Two response SHAPES behind one path (`OrgWithRole[]` for the switcher,
+ * `OrgAdminRow[]` for the admin table under `includeDeleted`). The choice is the
+ * service's, not this handler's: it depends on the caller's global-admin flag,
+ * which is authorization, and authorization decisions do not belong in an
+ * adapter.
+ */
 export async function listMyOrgs(req: Request, res: Response): Promise<void> {
   const user = requireUser(req);
-  respond(res, await orgsService.listOrgsForUser(user));
+  const query = getParsed<OrgListQuery>(res, 'query');
+  respond(res, await orgsService.listOrgs(user, query));
 }
 
 /** `POST /api/orgs` — global admin. */
@@ -52,6 +62,18 @@ export async function deleteOrg(_req: Request, res: Response): Promise<void> {
   const { orgId } = getParsed<OrgParams>(res, 'params');
   await orgsService.softDeleteOrg(orgId);
   respondNoContent(res);
+}
+
+/**
+ * `POST /api/orgs/:orgId/restore` — global admin, the undo of the soft delete.
+ *
+ * Answers with the ADMIN row rather than 204: the caller is the archived-orgs
+ * table, and handing back the restored row lets it patch its cache in place
+ * instead of refetching a list the user is still looking at.
+ */
+export async function restoreOrg(_req: Request, res: Response): Promise<void> {
+  const { orgId } = getParsed<OrgParams>(res, 'params');
+  respond(res, await orgsService.restoreOrg(orgId));
 }
 
 /** `GET /api/orgs/:orgId/members` — any org member. */

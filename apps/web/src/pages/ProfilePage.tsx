@@ -20,6 +20,7 @@ import PageHeader from '@/components/common/PageHeader';
 import PageSpinner from '@/components/common/PageSpinner';
 import ErrorState from '@/components/common/ErrorState';
 import UserAvatar from '@/components/common/UserAvatar';
+import MotionCard from '@/components/common/MotionCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,6 +49,13 @@ import {
  * different endpoints, different failure modes and different consequences
  * (changing a password revokes every other device), and a single Save that
  * sometimes signs you out of your phone is a surprise. Two cards, two submits.
+ *
+ * …and one card that is NOT a form. `<MotionCard/>` sets a DEVICE preference
+ * (`lib/motion-policy`, `localStorage`), so it applies on click and owes
+ * nothing to a Save button — see its own header for why it is not a row inside
+ * the profile form. It sits last: the two forms above it are the reason someone
+ * opens this page, and a preference nobody is looking for should not push them
+ * down.
  */
 
 /**
@@ -167,6 +175,8 @@ export default function ProfilePage() {
       </Card>
 
       <PasswordCard />
+
+      <MotionCard />
     </section>
   );
 }

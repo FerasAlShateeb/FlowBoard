@@ -8,7 +8,6 @@ import {
   orgWithRoleSchema,
   type AddMemberInput,
   type CreateInviteInput,
-  type CreateOrgInput,
   type Invite,
   type OrgDetail,
   type OrgMember,
@@ -21,6 +20,7 @@ import {
 import { api } from '@/lib/api';
 import { qk } from '@/lib/query-keys';
 import { useApiErrorToast } from '@/i18n/errors';
+import { useAuthStore } from '@/stores/useAuthStore';
 
 /**
  * Organization data: the list you belong to, one org's detail, its members, its
@@ -54,12 +54,102 @@ const inviteListSchema = z.array(inviteSchema);
  * permission input for "may I create a project here". It is small, changes
  * rarely, and is needed by the shell on every page, so it carries a longer
  * `staleTime` than the app default.
+ *
+ * ═══ `?scope=member` — WHAT "VIEW AS MEMBER" DOES TO THIS QUERY ════════════
+ *
+ * `GET /orgs` has a global-admin branch: an admin gets EVERY organization on
+ * the instance, not only the ones they belong to. That is right for an admin
+ * and wrong for the preview — an admin checking "what does a member see" would
+ * otherwise get a switcher listing the whole platform, which is the one thing a
+ * member never sees. So member view asks the server to answer as a member.
+ *
+ * The request is a NARROWING and never a widening, so honouring it costs no
+ * security: `scope=member` can only remove rows. It also degrades cleanly while
+ * W1.1 is still landing the parameter — an unknown query param is ignored, and
+ * the shell renders the admin's own list until it is not.
+ *
+ * The scope is part of the CACHE KEY, appended to `qk.orgs.mine()` rather than
+ * folded into it (the key factory is a frozen stitch file this round). The
+ * prefix is unchanged, so every existing `invalidateQueries({ queryKey:
+ * qk.orgs.mine() })` and `qk.orgs.all()` still reaches both entries — and
+ * flipping the switch swaps lists instead of showing the previous one until a
+ * refetch lands.
  */
 export function useOrgs(): UseQueryResult<OrgWithRole[]> {
+  // The REAL flag: a non-admin's list is already member-scoped, so sending the
+  // parameter for them would be a second cache entry holding identical rows.
+  const asMember = useAuthStore((state) => state.isGlobalAdmin() && state.viewingAsMember);
+
   return useQuery({
-    queryKey: qk.orgs.mine(),
-    queryFn: ({ signal }) => api.get('/orgs', { schema: orgListSchema, signal }),
+    queryKey: [...qk.orgs.mine(), asMember ? 'member' : 'all'],
+    queryFn: ({ signal }) =>
+      api.get('/orgs', {
+        schema: orgListSchema,
+        query: asMember ? { scope: 'member' } : {},
+        signal,
+      }),
     staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * How many organizations the switcher will filter in the browser.
+ *
+ * Below this the whole list is already cached, so `ui/command`'s matcher costs
+ * nothing and never flickers. Above it the list stops being something you
+ * scroll — and a forty-org instance is an ADMIN's instance, where the switcher
+ * is a search box, not a menu.
+ */
+export const ORG_SERVER_SEARCH_THRESHOLD = 20;
+
+/**
+ * `GET /orgs?q=` — the switcher's server-side search, for large instances.
+ *
+ * Its own cache entry per needle (the key carries `q`), deliberately: it is a
+ * transient answer to one popover session, and letting it share
+ * `qk.orgs.mine()` would make the org switcher overwrite the list the sidebar,
+ * the home redirect and every permission check read.
+ *
+ * `enabled` is the caller's, because below the threshold this hook must not run
+ * at all. It also degrades: W1.1 adds the `q` parameter, and until it lands an
+ * unknown query param is simply ignored and the full list comes back — which
+ * the switcher renders unfiltered rather than empty.
+ *
+ * ═══ IT CARRIES `scope` FOR THE SAME REASON `useOrgs` DOES (R2 W3.5) ═══════
+ *
+ * This is the OTHER half of the org switcher, and it was answering a different
+ * question. `useOrgs` sends `?scope=member` while an admin is previewing member
+ * view, so the switcher lists only the orgs they belong to; `useOrgsSearch` sent
+ * no scope, so on an instance past {@link ORG_SERVER_SEARCH_THRESHOLD} — the
+ * only instances where this hook runs at all — typing into the switcher
+ * refilled it with EVERY organization on the platform. The preview leaked
+ * exactly the thing it exists to hide, and only on the large instances where an
+ * admin would notice least.
+ *
+ * The flag is read the same way (`isGlobalAdmin() && viewingAsMember`, so a
+ * non-admin never spends a second cache entry on identical rows) and the scope
+ * is appended to the key the same way, so the two entries cannot cross-fill.
+ */
+export function useOrgsSearch(
+  search: string,
+  options: { enabled?: boolean } = {},
+): UseQueryResult<OrgWithRole[]> {
+  const asMember = useAuthStore((state) => state.isGlobalAdmin() && state.viewingAsMember);
+  const q = search.trim();
+
+  return useQuery({
+    queryKey: [...qk.orgs.mine(), 'search', q, asMember ? 'member' : 'all'],
+    queryFn: ({ signal }) =>
+      api.get('/orgs', {
+        schema: orgListSchema,
+        query: {
+          ...(q ? { q } : {}),
+          ...(asMember ? { scope: 'member' } : {}),
+        },
+        signal,
+      }),
+    enabled: options.enabled ?? true,
+    staleTime: 60_000,
   });
 }
 
@@ -156,20 +246,18 @@ export function useOrgInvites(
 // Mutations
 // ───────────────────────────────────────────────────────────────────────────
 
-/** `POST /orgs` — the creator becomes its first admin. */
-export function useCreateOrg() {
-  const queryClient = useQueryClient();
-  const onError = useApiErrorToast();
-
-  return useMutation({
-    mutationFn: (input: CreateOrgInput) =>
-      api.post<OrgDetail>('/orgs', input, { schema: orgDetailSchema }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.orgs.all() });
-    },
-    onError,
-  });
-}
+/**
+ * `POST /orgs` LIVES IN `useAdminOrgs.useCreateAdminOrg`, NOT HERE.
+ *
+ * A `useCreateOrg` used to sit at this spot and had no caller at all — no UI
+ * could create an organization. Round 2's admin Organizations page gave the
+ * endpoint its first real consumer, and that consumer needs a cache
+ * invalidation this hook never did: `qk.orgs.all()` alone does not reach
+ * `['admin','orgs']` or `qk.instance.all()`, so a create fired from here would
+ * leave the admin table showing a deployment without the org just made. W3.1
+ * deleted the dead hook rather than leave two doors onto one endpoint, one of
+ * which quietly lies to the console.
+ */
 
 /** `PATCH /orgs/:orgId` — rename or re-slug. */
 export function useUpdateOrg(orgId: string) {

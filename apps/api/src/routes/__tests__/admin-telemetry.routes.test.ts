@@ -23,7 +23,9 @@ import {
   topEndpointsSchema,
 } from '@flowboard/shared';
 
-import { closeDb, db, telemetryEvents } from '../../db';
+import { eq } from 'drizzle-orm';
+
+import { closeDb, db, projects, telemetryEvents } from '../../db';
 import { setTelemetrySink } from '../../services/telemetry.service';
 import { ensureTestDb, truncateAllTables } from '../../test/test-db';
 import { bearer, seedOrg, seedProject, seedUser, tokensFor } from './identity-test-app';
@@ -205,6 +207,70 @@ describe('GET /api/admin/telemetry/events', () => {
     expect(rows[1]?.payload).toEqual({ query: 'flow', resultCount: 3 });
     // bigserial ids cross the wire as decimal STRINGS.
     expect(rows[1]?.id).toMatch(/^\d+$/u);
+  });
+
+  /**
+   * R2 W3.5 — the Project column used to render a raw UUID beside a User column
+   * that already showed a name. `projectName` rides the row now, joined the same
+   * way `userName` is.
+   *
+   * BOTH JOINS MUST STAY LEFT, and the first case is the proof: `project_id` is
+   * nullable by design (an `auth_login` belongs to no project), so an inner join
+   * would not merely blank a cell — it would DELETE every platform-level event
+   * from an audit feed.
+   */
+  it('keeps a project-less event in the feed, with both project fields null', async () => {
+    const { admin, token } = await seedAdmin();
+    const org = await seedOrg({ createdById: admin.id });
+    const apollo = await seedProject(org.id, { name: 'Apollo' });
+
+    await seedEvent({ type: 'task_created', createdAt: H(1), projectId: apollo.id });
+    await seedEvent({ type: 'auth_login', createdAt: H(2), projectId: null });
+
+    const rows = telemetryEventsResponseSchema.parse(
+      (await getOk('/api/admin/telemetry/events', token)).data,
+    );
+
+    // Newest first — the login is row 0, and it is STILL HERE.
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ type: 'auth_login', projectId: null, projectName: null });
+  });
+
+  it('carries the project NAME alongside the id, and keeps the id', async () => {
+    const { admin, token } = await seedAdmin();
+    const org = await seedOrg({ createdById: admin.id });
+    const apollo = await seedProject(org.id, { name: 'Apollo' });
+
+    await seedEvent({ type: 'task_created', createdAt: H(1), projectId: apollo.id });
+
+    const rows = telemetryEventsResponseSchema.parse(
+      (await getOk('/api/admin/telemetry/events', token)).data,
+    );
+
+    // The ID IS STILL THERE — the feed's project filter takes it, and the web
+    // cell hovers it. The name is what a human reads.
+    expect(rows[0]).toMatchObject({ projectId: apollo.id, projectName: 'Apollo' });
+  });
+
+  /**
+   * An ARCHIVED project still resolves. This feed is an audit surface: history
+   * about a project that was switched off last week is exactly the history
+   * somebody is reading it for, and an em dash where the name used to be would
+   * make it unfollowable.
+   */
+  it('still names a SOFT-DELETED project', async () => {
+    const { admin, token } = await seedAdmin();
+    const org = await seedOrg({ createdById: admin.id });
+    const apollo = await seedProject(org.id, { name: 'Apollo' });
+
+    await seedEvent({ type: 'task_created', createdAt: H(1), projectId: apollo.id });
+    await db.update(projects).set({ deletedAt: new Date() }).where(eq(projects.id, apollo.id));
+
+    const rows = telemetryEventsResponseSchema.parse(
+      (await getOk('/api/admin/telemetry/events', token)).data,
+    );
+
+    expect(rows[0]).toMatchObject({ projectId: apollo.id, projectName: 'Apollo' });
   });
 
   it('filters on a comma-separated list of types', async () => {

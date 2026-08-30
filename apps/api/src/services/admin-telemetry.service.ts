@@ -18,6 +18,12 @@
  * short for a reason the chart cannot show, which reads as a traffic dip that
  * is really a rounding artefact.
  *
+ * THE BUCKET BOUNDARIES ARE UTC because the POOL pins the session zone, not
+ * because these queries ask for it: `date_trunc` on a `timestamptz` truncates in
+ * the session's `TimeZone`. See the `TimeZone: 'UTC'` note in `db/client.ts` —
+ * it is what makes {@link startOfUtcDay} below (computed in Node, in UTC) and
+ * these buckets agree about when a day starts on any deployment.
+ *
  * ── EMPTY BUCKETS ARE ROWS, NOT GAPS ────────────────────────────────────────
  * Both series are built from a `generate_series` spine LEFT JOINed to the data,
  * so an hour with no traffic comes back as `count: 0` rather than as a missing
@@ -49,7 +55,7 @@ import {
   type TopEndpoints,
 } from '@flowboard/shared';
 
-import { db, requestLogs, telemetryEvents, users } from '../db';
+import { db, projects, requestLogs, telemetryEvents, users } from '../db';
 import { ApiError } from '../utils/api-error';
 import type {
   AdminTelemetryEventsQuery,
@@ -277,9 +283,19 @@ export async function listEvents(query: AdminTelemetryEventsQuery): Promise<Tele
       payload: telemetryEvents.payload,
       createdAt: telemetryEvents.createdAt,
       userName: users.name,
+      projectName: projects.name,
     })
     .from(telemetryEvents)
+    // BOTH joins are LEFT, and both must stay that way. `user_id` and
+    // `project_id` are nullable by design — a `page_view` on the login screen
+    // has neither, an `auth_login` has no project — so an inner join would not
+    // merely blank a cell, it would DELETE those rows from an audit feed
+    // entirely. Both columns are also `ON DELETE SET NULL`, so a hard delete
+    // leaves the event standing with a null reference. A soft-deleted
+    // (archived) project still resolves, which is the right answer here: the
+    // history stays readable after the project is switched off (R2 W3.5).
     .leftJoin(users, eq(telemetryEvents.userId, users.id))
+    .leftJoin(projects, eq(telemetryEvents.projectId, projects.id))
     .where(where)
     .orderBy(...eventOrderBy(query.sort))
     .limit(query.pageSize)
@@ -297,6 +313,7 @@ export async function listEvents(query: AdminTelemetryEventsQuery): Promise<Tele
       payload: toPayload(row.payload),
       createdAt: row.createdAt.toISOString(),
       userName: row.userName,
+      projectName: row.projectName,
     })),
     meta: {
       page: query.page,

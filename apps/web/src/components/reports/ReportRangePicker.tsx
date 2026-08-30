@@ -35,6 +35,31 @@ import {
  * A hand-picked pair is normalized on the way out, so setting `to` before
  * `from` swaps rather than firing a request for an inverted window the API
  * would reject.
+ *
+ * ── WHY THIS SURVIVED W3.1's RANGE-PICKER CONSOLIDATION ─────────────────────
+ *
+ * `components/dashboard/RangePicker` supersedes the ADMIN console's bespoke
+ * chips, and W2.2/W3.1 migrated those. It does not supersede this one, and the
+ * difference is not cosmetic:
+ *
+ *   • **Different units.** This picker counts in SPRINTS — 2w/4w/8w, the spans a
+ *     standup and a retro actually ask about. The console counts in reporting
+ *     periods — 7d/30d/90d/12m. Swapping in the console's presets would give a
+ *     burndown a "last 12 months" chip and take away "the last two weeks".
+ *   • **Different value.** The console's control edits a `{preset, from?, to?}`
+ *     that is resolved against the clock at request time (`range.ts`: a `7d`
+ *     view re-read an hour later must still mean the last seven days). This one
+ *     edits a resolved `{from, to}` pair of `YYYY-MM-DD` strings, because a
+ *     sprint report is an artefact of a FIXED window — a burndown that silently
+ *     slides forward while you read it is not a burndown.
+ *   • **Different control.** Two independent single-day fields, so an endpoint
+ *     can be nudged without re-picking the other; the console has one range
+ *     calendar, which is right for exploring and wrong for adjusting.
+ *
+ * Migrating would therefore be a redesign of the reports dashboard's window
+ * semantics, not a substitution — so it was left alone, and the duplication is
+ * bounded: `range.ts` and `report-range.ts` are the only two, and each says in
+ * its header which question it answers.
  */
 export function ReportRangePicker({
   range,

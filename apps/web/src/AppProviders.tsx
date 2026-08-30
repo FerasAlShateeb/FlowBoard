@@ -7,6 +7,7 @@ import { useLang } from '@/lib/lang-policy';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import PaletteMount from '@/components/palette/PaletteMount';
+import ThemeStudioSlot from '@/components/theme/ThemeStudioSlot';
 
 /**
  * Every context the app needs, in one place.
@@ -80,6 +81,14 @@ export default function AppProviders({ children }: { children: ReactNode }) {
           {/* The keyboard layer: Ctrl+K, `?`, `c`. See the note above — it is
               deliberately a sibling of the router, not a child of it. */}
           <PaletteMount />
+          {/* The Theme Studio drawer (Round 2 §Theme D5) and its topbar button.
+              Here, beside the palette, for the same two reasons: a modal panel
+              belongs above the app rather than inside the topbar's `z-30`
+              stacking context, and this is the one place a feature can mount
+              itself without editing the shell. It navigates through the router
+              OBJECT (`navigateApp`) because, like the palette, it is above
+              `<RouterProvider/>` — see `components/theme/ThemeStudioSlot.tsx`. */}
+          <ThemeStudioSlot />
           {/* The single toast host. Inside the direction provider so an Arabic
               toast lays out right-to-left. */}
           <Toaster />

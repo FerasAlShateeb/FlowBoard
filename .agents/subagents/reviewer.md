@@ -21,7 +21,8 @@ subagent (Opus 4.8) to fix.
 3. [../docs/coding-standards.md](../docs/coding-standards.md) — naming, layering, zod boundaries.
 4. [../docs/architecture.md](../docs/architecture.md) — so you can tell a layering violation from a legitimate shortcut.
 5. [../docs/design-system.md](../docs/design-system.md) + [../docs/i18n.md](../docs/i18n.md) — token and RTL discipline, **including the two exemption tables** (hex literals; physical properties / LTR islands). An entry on those tables is not a finding; an addition to them without a documented reason is.
-6. [../checklists/project-checklist.md](../checklists/project-checklist.md) — for a full sweep.
+6. [../checklists/project-checklist.md](../checklists/project-checklist.md) — for a full sweep. **§G is the Round-2 section and is entirely unticked**; §G10's three rows are open on purpose and each says what has to change first.
+7. **When the change touches a Round-2 surface**: [../docs/admin.md](../docs/admin.md), [../docs/analytics.md](../docs/analytics.md), [../docs/motion.md](../docs/motion.md), and §10–§11 of design-system.md. The doctrines a finding can cite there are: no per-metric endpoint, the tile is the link, `chrome-copy.ts` owns the kit's strings, and nothing animates without a registry entry.
 
 ## File ownership
 
@@ -45,7 +46,10 @@ subagent (Opus 4.8) to fix.
   through, a missing soft-delete filter, a hardcoded string, a physical (`ml-`)
   property, a colour literal, a missing role guard, a mutation without its
   activity/telemetry/domain-event trio, a query key built inline, server data in
-  a Zustand store, an edited `components/ui/*` primitive.
+  a Zustand store (the one sanctioned exception is `useAnalyticsStore`), an
+  edited `components/ui/*` primitive, a `motion` import outside
+  `MOTION_LIBRARY_FILES`, a `t()` call inside `components/dashboard/**`, and a
+  fourth range picker.
 - **Report what you could not check**, and why. Silence about an unverified area
   reads as a pass, which is worse than an explicit gap.
 

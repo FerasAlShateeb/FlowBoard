@@ -42,6 +42,14 @@ note under §B says so.
 (F2, 5 rows). Read F2 before "fixing" anything in it — each entry is a decision
 that was made, not work that was missed.
 
+**§G is Round 2, and every row in it is unticked.** It covers instance
+administration and single-org mode, the navigation shell and view-as-member, the
+analytics console, the dashboard primitive kit, the Theme Studio drawer, and
+motion. The rows describe shipped behaviour like the rest of this file, so an
+unticked box there means "not yet verified with evidence" — the closing review
+pass (W3.5) is what ticks them. §G10 is different: those three rows are **open on
+purpose**, each with a status note saying what has to change first.
+
 ---
 
 ## Wave 0 — Scaffold
@@ -331,7 +339,7 @@ All **seven** shipped types fire (`notificationTypeSchema`):
 ## C. i18n and RTL
 
 - [x] No hardcoded user-facing strings anywhere in `apps/web/src`.
-- [x] The Arabic catalog is complete — every English key has an Arabic value across all 19 namespaces, proven by `src/i18n/locales.test.ts`.
+- [x] The Arabic catalog is complete — every English key has an Arabic value across all namespaces (**20 since Round 2 added `analytics`**), proven by `src/i18n/locales.test.ts`.
 - [x] Arabic plural keys carry the **full CLDR set** (`zero/one/two/few/many/other`), not just the English `one`/`other` pair — and you know what the parity test does _not_ assert about plural suffixes.
 - [x] Typed keys compile; a missing key is a build error.
 - [x] The Arabic terminology matches the binding glossary in `docs/i18n.md` — one word per concept, not a synonym per view.
@@ -586,6 +594,151 @@ decision, not an oversight.
       structurally impossible means a wrapper that cannot be called without a
       schema — worth doing, not yet done, and named here so it is a decision rather
       than a discovery.
+
+---
+
+## G. Round 2 — instance admin, analytics, the drawer, motion
+
+**Verified in R2 W3.5.** Every row in G1–G9 was walked against the test suites and
+either ticked with the assertion that pins it, or left unticked with a
+`**Not yet verified:**` note naming exactly what is missing — because an unticked
+box has to mean something a reader can act on. The score is **47 ticked, 25 not**,
+and the 25 split into two honest kinds: a claim whose halves are only partly
+asserted (13), and a claim nothing asserts at all (12). None of them is a claim
+believed to be FALSE; every one describes shipped behaviour that no test currently
+pins. G10–G12 record what W3.5 itself changed.
+
+The reference docs are [admin.md](../docs/admin.md), [analytics.md](../docs/analytics.md),
+[motion.md](../docs/motion.md), and §10–§11 of [design-system.md](../docs/design-system.md).
+
+### G1 — Instance settings and single-org mode
+
+- [ ] `instance_settings` is a real singleton: the `instance_settings_singleton` check refuses a second row, and the migration's `INSERT … ON CONFLICT DO NOTHING` plus the service's lazy `readRow()` both leave exactly one. **Not yet verified:** the constraint name and the lazy `readRow()` are asserted; nothing inserts a SECOND row to prove the database refuses it, and the migration’s `ON CONFLICT DO NOTHING` is untested.
+- [x] `GET /api/instance/config` is `requireAuth` only and returns `{orgMode, defaultOrgSlug, instanceName}`; `GET`/`PATCH /api/admin/settings` are global-admin only. A non-admin gets 403 on the second pair and 200 on the first.
+- [x] `defaultOrgSlug` is **resolved, never stored**: archiving the default org makes it fall back (single mode) or go `null`, with no stale slug surviving in the row.
+- [ ] `PATCH` refuses with **`default_org_invalid`** for an unknown or archived org and **`default_org_required`** when switching to single mode with more than one live org — and the transaction does not commit on either. **Not yet verified:** both 422 codes are asserted; the "does not commit" half is proven only for `default_org_required`, not for `default_org_invalid`.
+- [x] Switching to single mode with exactly one live org auto-adopts it; with **zero** orgs it is allowed and leaves `defaultOrgId` null.
+- [x] Flipping back to `multi` keeps the configured `defaultOrgId` rather than clearing it.
+- [ ] Single-mode collapse is complete and live: the org switcher renders nothing, `/` short-circuits to the default org **before** `GET /orgs` resolves, the sidebar and breadcrumbs fall back to `defaultOrgSlug`, and `/admin/orgs` shows the mode banner with Create still enabled. **Not yet verified:** the switcher, the `/` short-circuit and the banner are covered (`instance-mode.spec.ts`); the breadcrumbs’ `defaultOrgSlug` fallback and "Create stays enabled" on the banner page are not.
+- [ ] A failed `/instance/config` degrades to `multi` — the shape that hides nothing — rather than hiding an org. **Not yet verified:** the `FALLBACK_INSTANCE_CONFIG` degrade path is never driven — every consumer’s test mocks `useInstanceConfig` outright rather than failing the query through it.
+- [x] Saving instance settings invalidates `qk.instance.all()`, so the shell collapses or expands **without a reload**.
+- [ ] The seed writes an `instance_settings` row (`orgMode: 'multi'`, no default) and two organizations, so every cross-org surface has more than one row. **Not yet verified:** nothing asserts the seed’s `instance_settings` row or that it writes two organizations; the e2e fixtures only assume both.
+
+### G2 — Escape routes, navigation and view-as-member
+
+- [x] On `/admin/*` the sidebar still shows real workspace links, resolved through the `orgSlug ?? lastOrgSlug ?? defaultOrgSlug` ladder.
+- [ ] All four escape routes work from a deep `/admin/*` page: the brand mark links to `/`, the Home nav row is present, the switcher's footer offers "All organizations" **outside** the filtered `CommandList`, and an unknown URL renders `NotFoundPage` inside the shell with a back-link. **Not yet verified:** the brand mark, the Home row and the switcher’s footer are covered; an unknown URL rendering `NotFoundPage` INSIDE the shell with a back-link is not.
+- [x] The org switcher is an always-enabled searchable combobox in multi mode — never a disabled button.
+- [x] Breadcrumbs render on every route family, the last crumb is not a link, and `/admin/analytics/:domain/:metric` names the **metric**, not a prettified URL segment.
+- [ ] The sidebar, the breadcrumbs and the command palette all derive from `buildSections` — no second nav list anywhere. **Not yet verified:** `buildSections` is exhaustively tested and all three surfaces import it, but nothing cross-checks the three against each other or rules out a second hard-coded nav list.
+- [x] `isGlobalAdmin()` (real) and `isEffectiveGlobalAdmin()` (effective) are used in the right places: the switch itself reads the real flag, every chrome surface reads the effective one.
+- [x] Switching **into** member view while on `/admin/*` bounces to `/` with `replace`; switching back never bounces.
+- [x] A deep link into `/admin/*` while in member view renders the "return to admin view" empty state, not a silent redirect.
+- [x] The amber pill shows only for a real admin in member view and returns in one click; the mode persists to `fb-view-mode-v1` and is cleared by sign-out.
+- [x] `GET /orgs?scope=member` narrows a global admin to their own memberships **server-side**, and the query key carries the scope so the two answers cannot overwrite each other in the cache.
+- [ ] API authorization is unchanged by view-as: every `/admin/*` endpoint still answers on the real flag. **Not yet verified:** no API test drives an `/admin/*` endpoint under a view-as client state. `GET /orgs?scope=member` is covered, but that is a list NARROWING, not the authorization claim.
+
+### G3 — The analytics console
+
+- [x] Every KPI tile is a link around the **whole** card, and every chart card's "Details →" is in the header only.
+- [x] There is no per-metric server route: a drill-down fetches its **domain** endpoint, and the URL never contains the metric id.
+- [x] Two metrics of one domain rendered in one frame issue **one** request; a facet change issues none; a rejected load is not cached.
+- [x] Every `MetricTile` / `DrillChartCard` link is built with `detailPath(domain, metric)` and type-checks against the registry — no hand-built `/admin/analytics/...` string.
+- [ ] The shared range survives switching between the four dashboards, and the drill-down's range is **local** so widening it does not rewrite the dashboard's. **Not yet verified:** the shared range across the four dashboards is covered; nothing asserts that widening the DRILL-DOWN’s range leaves the dashboard’s untouched.
+- [x] The preset — not the resolved window — is the cache key, so a repeat render hits rather than refetching.
+- [ ] Cold renders a skeleton; **warm keeps the previous numbers on screen** while refetching, on the dashboards and on `/admin/overview` alike. **Not yet verified:** cold-vs-warm is asserted for the four dashboards (`useAnalyticsStore.test.ts`); `/admin/overview` has no equivalent assertion.
+- [x] Auto-refresh is opt-in, off by default, and 30 s.
+- [x] Every CSV export goes through `saveBlob`/`downloadCsvBlob`, carries the **whole filtered set** in sort order, and uses the table's translated headers.
+- [x] The drill-down's sort orders the full filtered set before paging — page 2 of a sort is the real page 2, not a reshuffle.
+- [ ] Every filter, sort and range change resets to page 1. **Not yet verified:** nothing asserts that a filter, a sort or a range change resets to page 1 — on the drill-down or on any grid.
+- [x] An unknown `:domain`/`:metric` pair renders the friendly not-found with a way back, including `/admin/analytics/overview/anything`.
+- [ ] `MAX_BUCKETS = 400` refuses an undrawable window with a message naming what to change, rather than silently coarsening the interval. **Not yet verified:** the 400 and the exact 400-bucket ceiling are asserted; the message NAMING what to change is not.
+- [x] The analytics aggregations keep the documented math — gap-filled zeros, half-open buckets, `percentile_cont`, a 5xx-only error rate — and each endpoint is one round trip.
+
+### G4 — The dashboard primitive kit
+
+- [x] `PanelCard`'s ladder is error → pending → empty → content, and the caption renders only with content.
+- [ ] The `ReportCard` / `PanelCard` split is respected: nothing new pins 16:10 outside the six-chart reports grid, and every `PanelCard` states a skeleton that reserves the height its content will take. **Not yet verified:** the skeleton’s height reservation is asserted; the "nothing new pins 16:10 outside the six-chart reports grid" half has no test.
+- [x] The three range vocabularies are intact and each file header still says which question it answers; nothing that wants `7d/30d/90d/12m` rolls its own picker.
+- [x] `DataTable` registers its v9 features explicitly, uses `sortFn` + `sortUndefined: false`, and puts **nullish last ascending, first descending** — `compareValues` is a **direction-blind comparator** and TanStack re-inverts it, which is what keeps a blank cell at the far end of whichever order was asked for.
+- [x] A grid's filters, sort and paging round-trip through the URL; column visibility, order and density deliberately do **not**.
+- [ ] Every string the kit renders comes from `chrome-copy.ts`, and every borrow has a row in its KEPT/MINTED table. **Not yet verified:** `PanelCard`’s own two strings are now proven to come from `chrome-copy` (R2 W3.5, §G11), but the kit-WIDE claim and the KEPT/MINTED table are still documentation rather than an assertion.
+- [ ] `OPS_CHART_BODY` keeps the two side-by-side ops plots at the same height. **Not yet verified:** `ops-panel.ts`, `LatencyChart` and `RequestsChart` have no test file at all; `OPS_CHART_BODY` is unasserted.
+
+### G5 — The Theme Studio drawer
+
+- [x] Opening the drawer moves focus to its close button; Tab cycles inside the panel; Escape and a scrim click both close it; closing **unmounts** it.
+- [x] The tablist roves with arrow keys and wraps, and the arrows are reversed under RTL (`ArrowRight` = previous tab).
+- [x] Every change applies **live** app-wide, and only **Save** writes localStorage.
+- [ ] The drawer has no leave guard and `/theme` still does: its `useBlocker` dirty guard and `beforeunload` handler are intact. **Not yet verified:** `/theme`’s `useBlocker` guard is covered; `beforeunload` is not, and nothing asserts that the DRAWER has no guard when it is closed dirty.
+- [ ] "Advanced editor →" reaches `/theme` through the injected `navigate`, and `/theme` can reopen the drawer over itself. **Not yet verified:** the hand-off into `/theme` is covered; `/theme` reopening the drawer over itself is not.
+- [x] `mod+shift+t` toggles the drawer and appears in the `?` cheat sheet because it is registered through `lib/shortcuts.ts`.
+- [x] The drawer paints above the sidebar and every Radix overlay — proof that mounting it from `AppProviders` rather than the topbar still holds.
+- [x] Preset mini-previews render and the active preset is marked by structural match, in the drawer as on the page.
+
+### G6 — Motion
+
+- [ ] With nothing stored, `<html data-motion>` is `full` **even while the OS asks for reduced** — and the stamp lands before the first paint. **Not yet verified:** the default-beats-OS rule is asserted; "before the first paint" is an ordering claim vitest cannot exercise — it needs a browser assertion on the pre-hydration DOM.
+- [x] Picking `system` follows the OS live; picking `full` or `reduced` takes the OS out of the loop; the stamp is never the literal `system`.
+- [x] The Motion card on `/me` persists, restamps and re-renders without a reload, and survives a throwing `localStorage`.
+- [x] All six registry entries have a working reduced branch, and each renders the **same copy, affordances and `data-testid`** as its full branch.
+- [x] Charts are static under reduced motion, and a **warm** refetch never re-animates a chart that is already drawn.
+- [ ] `animate-spin` is still un-gated, and no decorative spin has been added. **Not yet verified:** no test references `animate-spin` in either direction.
+- [x] `motion-imports.test.ts` passes with the allowlist exactly matching the source tree, and `framer-motion` is imported nowhere.
+- [ ] The gate block is still the last thing in `index.css`, still unlayered, still `:where()`-wrapped, and `--speed` is still untouched by it. **Not yet verified:** no test reads `index.css` to check the gate block’s position, its unlayered status, its `:where()` wrapping, or that `--speed` is untouched.
+
+### G7 — i18n and RTL for the new surfaces
+
+- [x] The `admin` and `analytics` namespaces have full en↔ar parity, proven by `locales.test.ts`.
+- [x] Every key the metric registry emits resolves in **both** catalogs, proven by `metric-registry.test.ts` — including the `DOMAIN_*` and `INTERVAL_*` maps.
+- [x] The catalog and the registry agree on the metric id set in both directions — no orphan entry either way.
+- [ ] Breadcrumbs, the org switcher, the drawer, the grids and the console pages all pass an RTL pass, with logical utilities only. **Not yet verified:** the console pages, the analytics dashboards and their drill-down, the org switcher and the drawer are covered (R2 W3.5, §G11); the breadcrumbs and the grids have no dedicated RTL assertion.
+- [ ] The new LTR islands are bounded and documented, each with a row in **[i18n.md §7.4](../docs/i18n.md)'s lexical-island table**: `StatDelta`'s pill (the pill, not the string) and the endpoint-path cells. Nothing else was pinned — and in particular no formatted date was, per that section's closing rule. **Not yet verified:** `StatDelta`’s pill is asserted `dir="ltr"` in the browser; the endpoint-path cells and the NEGATIVE claim ("nothing else was pinned", no formatted date) have none.
+
+### G8 — Charts and numbers (W3.1)
+
+- [x] **The events feed keeps an "All time" affordance** the console's `7d/30d/90d/12m` vocabulary cannot express, and `/admin/telemetry/requests` keeps its 24 h.
+- [ ] **A bucket caption appears only on a time axis** — `analytics:detail.perInterval` renders for a `line` series and never over a categorical `bar` breakdown. **Not yet verified:** no test references `analytics:detail.perInterval` or asserts that the caption appears on a `line` series and never over a `bar`.
+- [ ] **A count axis shows whole ticks only**: `allIntegers` drives `allowDecimals`, so a series of counts never grows a `2.5` gridline. **Not yet verified:** no test references `allIntegers` or `allowDecimals`.
+- [x] **Numeric badges are LTR islands**: `StatDelta` pins `dir="ltr"` on the pill, so `+12.5%` does not render as `12.5%+` in Arabic.
+- [x] **A conflict names the field the reader can change**: `slug_taken`, `org_slug_conflict`, `default_org_invalid`, `default_org_required` — never a bare `conflict` for something the user could have fixed.
+
+### G9 — Registry and grid regressions (W2.2)
+
+- [x] **Route params are looked up with `Object.hasOwn`, never a plain index.** `/admin/analytics/traffic/toString` and `/admin/analytics/constructor/dau` both resolve to the not-found card rather than a prototype member.
+- [x] **The domain payload cache is keyed by `domain|from|to|interval` and holds the promise, not the value**, so concurrent metrics share one in-flight request — and a rejection is evicted so a retry is a real retry.
+- [ ] **The first fetch is seeded from the URL.** A pasted, pre-filtered grid link produces exactly one correctly-filtered request, never a default request followed by a corrected one. **Not yet verified:** nothing mounts a page from a pre-filtered URL to prove it issues exactly ONE correctly-filtered request rather than a default followed by a correction.
+- [x] **Sorting happens over the whole filtered set before paging**, on the drill-down and on every server-shaped grid — never over the rows already on screen.
+
+### G10 — Was open on purpose; all three closed in W3.5
+
+- [x] **`StatDelta` has a lower-is-better mode.** **FIXED (R2 W3.5):** `goodDirection?: 'up' | 'down'` (default `'up'`) — the ARROW and `data-direction` follow the sign, only the COLOUR and `data-tone` follow the judgement, so a falling error rate is a down arrow in green. The polarity itself is declared once per metric on `MetricDefinition.deltaDirection` and read by `MetricTile` through `metricDeltaDirection(domain, metric)`, never special-cased in the badge. Marked `'down'`: `traffic.errors`, `traffic.error-rate`, `traffic.latency`, `work.cycle-time`. Evidence: `StatTile.test.tsx` (`StatDelta — goodDirection`, the four-cell matrix plus the zero and default cases) and `MetricTile.test.tsx` (driven through the REAL registry: a falling error rate is `good`, a rising error count is `bad`, a rising request total is still `good`).
+- [x] **The telemetry events feed's Project column shows a name.** **FIXED (R2 W3.5):** `telemetryEventRowSchema` gained a nullable `projectName`, joined LEFT in `admin-telemetry.service` beside `userName` — LEFT because `project_id` is nullable by design, so an inner join would delete every platform-level event from an audit feed. The id is untouched: the feed's filter takes it, the cell hovers it (`title`), and the CSV gives it its own column. Evidence: `admin-telemetry.routes.test.ts` (a project-less event kept with both fields null; name + id on a live project; a SOFT-DELETED project still named) and `e2e/tests/analytics.spec.ts` (`the events feed names the project instead of printing its UUID`).
+- [x] **`/admin/projects`'s Status column matches `/admin/orgs`'s.** **FIXED (R2 W3.5):** both states are explicit — `soft-success` "Live" and `soft-danger` "Archived" with the date on its `title` — and the column gained an `accessor`, so the archived rows can be gathered with a sort. Evidence: `AdminProjectsPage.test.tsx` (`badges a LIVE project explicitly, like /admin/orgs does` and `badges an ARCHIVED project, and dates it on the badge`), plus the convention note in [admin.md](../docs/admin.md) §7.
+
+### G11 — Round 2 W3.5: the adversarial review's findings
+
+Every row here was found by review rather than by a failing test, and every one
+ships with the regression test that would have caught it.
+
+- [x] **An archived organization revokes its projects — reads AND writes, HTTP and socket.** Archiving is one `UPDATE organizations SET deleted_at` and touches no project row, so the project guards had to carry the whole rule and did not: `requireOrgRole` filtered on `deleted_at` (it had an `:orgId` in hand), while `requireProjectRole` never looked at the org at all. Every `/api/projects/:projectId/*`, `/api/tasks/:taskId`, `/api/sprints/:sprintId`, `/api/comments/:commentId` and `/api/attachments/:attachmentId` route stayed open to a switched-off org's members, and to global admins. **FIXED:** `resolveProjectRef` joins `organizations` and requires `deleted_at IS NULL` on all five param sources (the load-bearing half — it runs before any role is considered, so it covers a global admin too), `findOrgRole` requires a live org (so no `org_members` row in a dead org can promote anyone, including on the socket path), and `sockets/socket-reads.loadProjectRef` does the same for `project:join`. The archive stays reversible: clearing `deleted_at` restores every route with no other write. Evidence: `org-liveness.routes.test.ts` (all five sources 200 → 404 → 200 across an archive and a restore; a global admin and an org admin both refused; a member's task read, PATCH and move all 404; a live sibling org untouched) and `gateway.test.ts` (`project:join` acks `NOT_FOUND` for a member of an archived org and for a global admin, and works again after a restore).
+- [x] **Deleting an account scrubs its name out of the mention markup too.** `@[Display Name](userId)` stores the name captured at write time, so the anonymize left the person's real name rendering inside every comment and task description that had ever mentioned them — the one place a name is actually read. **FIXED:** two `UPDATE … regexp_replace` statements inside the same transaction as the scrub, pinned to that one user id, with the name-half pattern copied from `MENTION_PATTERN`. Evidence: `admin-users-lifecycle.routes.test.ts` (both bodies rewritten, both occurrences in one body, another user's mention untouched; an uppercase-uuid mention; prose that only looks like a mention left byte-identical with `updated_at` unmoved).
+- [x] **`useOrgsSearch` carries `?scope=member`.** The org switcher's server-side search (the one that runs above `ORG_SERVER_SEARCH_THRESHOLD`) sent no scope, so typing one character during a view-as-member preview refilled the list with every organization on the instance — the one thing the preview exists to hide, on exactly the instances where an admin would notice least. **FIXED:** the same flag, the same query parameter and the same key suffix as `useOrgs`. Evidence: `useOrgs.test.tsx` (the 3×2 matrix over both hooks, plus the empty-needle case and the two cache entries proven not to cross-fill).
+- [x] **`AnalyticsDetailPage` drops an out-of-order response.** A monotonic `useRef` token mirroring `useAnalyticsStore.load`'s documented pattern; the error branch is guarded too, so a superseded failure cannot replace a good table with a retry card for a window nobody is looking at. Evidence: `AnalyticsDetailPage.test.tsx` (`an out-of-order response never wins` — the transport is held open by hand and the second request is answered first).
+- [x] **Bucket truncation is pinned to UTC.** `date_trunc` on a `timestamptz` truncates in the SESSION's zone, so every analytics and telemetry bucket boundary silently depended on a deployment's database configuration — invisible in development, because the compose image happens to be UTC. **FIXED at the pool** (`connection: { TimeZone: 'UTC' }` in `db/client.ts`) rather than at the six call sites, so future queries inherit it and there is no `SET` to forget on a reconnect. Evidence: `db/client.test.ts` (the session zone; the same instant truncating to a DIFFERENT day on a deliberately non-UTC control session, which is what proves the pin is load-bearing; the zone present on concurrent connections).
+- [x] **`/api/notifications` re-checks liveness.** It was the one authenticated router with no role guard to hang the lazy `token_version` / `is_active` recheck on — and the one a revoked session polls on a timer, carrying task titles and the names of the people who mentioned you. **FIXED** in the controller (`liveRecipient` → `loadLiveUser`), not in a new database-reading middleware, which would have been a fourth exception to the layering rule. Evidence: `notifications.routes.test.ts` (`a revoked session` — 401 on every endpoint after a deactivation and after a `token_version` bump, no write on the way to the refusal, a live account still served).
+- [x] **The diagnostics drawer reads the EFFECTIVE admin flag.** It read the real one, so an admin previewing member view kept a topbar button no member has, kept Ctrl+J bound away from the browser, and kept a live server-log tail docked beside the board they were previewing. Evidence: `DiagnosticsDrawer.test.tsx` (no panel, no trigger and no chords in member view; all three back the moment they return to admin view) — and it is now listed as a consumer in [admin.md](../docs/admin.md) §4.1.
+- [x] **The Theme Studio drawer traps the KEYBOARD and not the pointer.** The on-panel Tab handler only saw keystrokes that reached the panel, so focus parked on `document.body` (or in a portalled subtree) escaped on the next Tab while `aria-modal="true"` went on claiming otherwise. A document-level `focusin` redirects it back — only for a keyboard-origin move, and in the direction the keystroke implied — which keeps the live-preview contract its own e2e spec drives. Another modal or popover claiming focus is exempt — `mod+k` has no overlay gate, so the palette can open over the drawer, and without the exemption the backstop would yank focus out of its input. Evidence: `ThemeStudioDrawer.test.tsx` (`the focus backstop`: a keyboard escape pulled back, direction respected, a pointer move left alone, the NEXT Tab after a pointer interaction returning, no interference within the panel, the four portalled surfaces exempt, and the listener released on close).
+- [x] **The drawer owns `z-[120]`, above the popover family.** It shipped on the shared modal tier (`z-[100]`), below the `z-[110]` popover family that portals to `body` — so a tooltip or menu belonging to the app BEHIND the scrim painted straight through both scrim and panel. The z-scale is documented in the component header and in [design-system.md](../docs/design-system.md) §11.2, including the price: a popover-family primitive rendered from inside the panel would need `z-[130]` on its content. Evidence: `ThemeStudioDrawer.test.tsx` (`the z tier`: the tier on both panel and scrim, plus a guard that the panel renders no popover-family trigger on any tab).
+- [x] **`mod+shift+t` carries the `!overlayIsOpen()` gate**, like `?` and `c` — two `aria-modal` surfaces would mean two focus traps fighting for one Tab and two `body` scroll-lock cleanups racing. The gate does not see this drawer (it queries `ui/dialog` / `ui/sheet` `data-slot`s), so the chord can still close what it opened. Evidence: `shortcuts-wiring.test.tsx` (both halves of `overlayIsOpen` — the palette store and the DOM query — plus the self-toggle case).
+- [x] **Archiving an org empties its live project rooms.** The guards' fix covers every future request and every future join; a socket already IN one of those rooms asked its permission question once, at join time. `softDeleteOrg` publishes `org.archived` (project ids denormalized onto the event, so the subscriber needs no read) and the realtime bridge does `socketsLeave` plus `clearProjectPresence` — rooms, not connections, because archiving one tenancy is not revoking a person. Evidence: `realtime-bridge.test.ts` (project traffic stops without a disconnect; the presence roster is emptied; a different org's room untouched; the event published by the real service with the live project ids, and NOT published when the archive is refused).
+- [x] **`PanelCard`'s copy goes through `chrome-copy.ts`.** It was the one component in the dashboard kit calling `t()` itself, which put two of the kit's strings outside the KEPT/MINTED table a reviewer checks against and tied the analytics console to the reports namespace's layout. Evidence: `PanelCard.test.tsx` (`its copy comes from chrome-copy` — the rendered strings compared to what `usePanelChromeCopy()` resolves, not to English literals).
+- [x] **The `events-by-type` CSV has no duplicate header.** Its `type` and `wire` columns both read `analytics:columns.eventType`, so the exported file carried "Event" twice — two identically-named columns in a spreadsheet somebody is about to sort. `wire` now has `analytics:columns.eventTypeId` ("Event ID", minted in en + ar). Evidence: `e2e/tests/analytics.spec.ts` asserts the whole header line exactly (`Event,Event ID,Events,Share`) and that the headers are distinct.
+- [x] **The RTL sweep reaches Round 2's surfaces.** `e2e/tests/rtl.spec.ts` now covers `/admin/overview`, an analytics dashboard, its drill-down, the org switcher's portalled popover and the Theme Studio drawer in Arabic: `dir=rtl`, the drawer's box at the READING end (asserted as geometry, not as a class name), the mirrored Details and Back arrows (asserted as a computed `transform`), the `StatDelta` pill still `dir="ltr"`, the direction-aware tablist arrows, and Western digits throughout.
+
+### G12 — Accepted as-is, with the decision recorded
+
+- [x] **The single-org flip does not propagate to other live sessions**, and that is a decision rather than a gap. The admin's own tab is live (`qk.instance.all()` is invalidated); every other session learns the mode on its next reload or ordinary refetch. The degradation was verified graceful in both directions — a stale session keeps the shape it booted with, and single mode collapses the SHELL, not the data model, so no stale `orgMode` can produce a 404, a wrong permission or a lost write. The blast radius is one field on one row, changed by one person, perhaps once in an instance's life; every other live-propagation mechanism in FlowBoard exists either for something that changes many times a minute or for a security boundary, and this is neither. The server re-checks every guard regardless of what any client believes. Recorded in full in [admin.md](../docs/admin.md) §2.5.
 
 ---
 

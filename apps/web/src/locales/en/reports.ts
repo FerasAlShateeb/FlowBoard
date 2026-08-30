@@ -38,7 +38,6 @@ export default {
       '2w': 'Last 2 weeks',
       '4w': 'Last 4 weeks',
       '8w': 'Last 8 weeks',
-      custom: 'Custom',
     },
     rangeFrom: 'From',
     rangeTo: 'To',

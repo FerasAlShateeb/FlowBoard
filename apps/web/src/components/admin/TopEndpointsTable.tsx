@@ -1,10 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import type { TopEndpoint } from '@flowboard/shared';
 
-import { cn } from '@/lib/utils';
-import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -13,8 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import EmptyState from '@/components/common/EmptyState';
-import ErrorState from '@/components/common/ErrorState';
+import { PanelCard } from '@/components/dashboard/PanelCard';
 import { useTopEndpoints } from '@/hooks/useAdminTelemetry';
 
 import { useTelemetryFormat } from './telemetry-format';
@@ -112,9 +108,19 @@ export function TopEndpointsTable({
  * The panel: the query, and the three states every surface in FlowBoard owes
  * the user.
  *
- * Not built on `ReportCard` — that shell has a fixed 16:10 plot aspect so six
- * charts stay the same height, which is exactly wrong for a table whose height
- * is its row count.
+ * ── W3.1: THIS IS A `PanelCard` NOW ─────────────────────────────────────────
+ * It was a hand-rolled `Card` with its own `error → pending → empty → content`
+ * ladder and its own skeleton, written before W1.4's dashboard kit existed and
+ * explicitly NOT on `ReportCard`, whose fixed 16:10 plot aspect is exactly
+ * wrong for a table whose height is its row count. `PanelCard` is the shell
+ * that solved that: same ladder, same order, and a `table` skeleton that
+ * reserves row-heights instead of a plot. Adopting it deletes a duplicate
+ * ladder and makes this panel the same object as every analytics drill-down.
+ *
+ * The subtitle moved from a `<p>` beside the heading into the info tooltip,
+ * which is where `PanelCard` puts one-sentence explanations — and where it is
+ * reachable by keyboard rather than being a line of grey text that wraps under
+ * a narrow column.
  */
 export function TopEndpointsCard({
   window,
@@ -130,34 +136,25 @@ export function TopEndpointsCard({
   const endpoints = query.data?.endpoints ?? [];
 
   return (
-    <Card className={cn('flex flex-col gap-3 p-[var(--card-pad)]', className)}>
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-foreground">{t('admin:endpoints.title')}</h2>
-        <p className="text-xs text-muted-foreground">{t('admin:endpoints.subtitle')}</p>
-      </div>
-
-      {query.error ? (
-        <ErrorState error={query.error} onRetry={() => void query.refetch()} className="py-8" />
-      ) : query.isPending ? (
-        <div className="flex flex-col gap-2" data-testid="top-endpoints-skeleton">
-          {SKELETON_ROWS.map((width) => (
-            <Skeleton key={width} className="h-6" style={{ width: `${width}%` }} />
-          ))}
-        </div>
-      ) : endpoints.length === 0 ? (
-        <EmptyState
-          title={t('admin:endpoints.empty')}
-          message={t('admin:endpoints.emptyBody')}
-          className="py-8"
-        />
-      ) : (
-        <TopEndpointsTable endpoints={endpoints} />
-      )}
-    </Card>
+    <PanelCard
+      title={t('admin:endpoints.title')}
+      info={t('admin:endpoints.subtitle')}
+      className={className}
+      testId="top-endpoints-card"
+      error={query.error}
+      onRetry={() => void query.refetch()}
+      isPending={query.isPending}
+      isEmpty={endpoints.length === 0}
+      emptyTitle={t('admin:endpoints.empty')}
+      emptyMessage={t('admin:endpoints.emptyBody')}
+      skeleton={{ kind: 'table', rows: SKELETON_ROWS }}
+    >
+      <TopEndpointsTable endpoints={endpoints} />
+    </PanelCard>
   );
 }
 
-/** A ragged profile — an even one reads as a loaded table. */
-const SKELETON_ROWS = [100, 92, 84, 78, 70] as const;
+/** Deep enough to read as a table, shallow enough not to read as a page. */
+const SKELETON_ROWS = 5;
 
 export default TopEndpointsTable;

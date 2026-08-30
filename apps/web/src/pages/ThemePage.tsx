@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBlocker } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Download, RotateCcw, Save, Upload } from 'lucide-react';
+import { Download, PanelRight, RotateCcw, Save, Upload } from 'lucide-react';
 
 import PageHeader from '@/components/common/PageHeader';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
@@ -17,16 +17,27 @@ import ImportThemeDialog from '@/components/theme/ImportThemeDialog';
 import { downloadJson } from '@/components/theme/theme-file';
 import { matchColorPreset } from '@/components/theme/theme-presets';
 import { trackThemeChanged } from '@/lib/telemetry-client';
+import { useLayoutStore } from '@/stores/useLayoutStore';
 import { useThemeStore } from '@/stores/useThemeStore';
 
 /**
- * `/theme` — the Theme Studio.
+ * `/theme` — the ADVANCED theme editor.
  *
- * A PAGE, NOT A SLIDE-OVER. Choosing a palette is a considered, comparative
- * task: eight preset cards each showing two mock screens, a 22-row token
- * editor and a live preview do not fit in a 380px drawer, and half of the point
- * is watching the app behind the editor change. A route also means a theme can
- * be linked, bookmarked and deep-linked from the command palette.
+ * ═══ ROUND 2 REFRAMED THIS PAGE ════════════════════════════════════════════
+ *
+ * It used to be the only Theme Studio, and its header note argued that a studio
+ * should be a page rather than a slide-over. Both are now true of different
+ * halves of the job. `components/theme/ThemeStudioDrawer.tsx` — the 380px
+ * slide-over on the topbar's palette icon — owns the QUICK decisions (a preset,
+ * a typeface, a dimension word) precisely because it leaves the app you are
+ * looking at on screen while it applies them. This page keeps the work that
+ * needs room: the 22-token editor, the side-by-side light/dark cards, the
+ * persistent preview column and the unsaved-changes guard.
+ *
+ * The original argument survives for that half, unchanged: eight preset cards
+ * each showing two mock screens plus a 22-row token editor do not fit in
+ * 380px, and a route means a theme can be linked, bookmarked and deep-linked
+ * from the command palette.
  *
  * THREE TABS + A PERSISTENT PREVIEW. The tabs split the work by the question
  * being asked (what colour, what typeface, what shape); the preview column
@@ -58,6 +69,7 @@ export default function ThemePage() {
   const save = useThemeStore((state) => state.save);
   const resetToDefault = useThemeStore((state) => state.resetToDefault);
   const exportTheme = useThemeStore((state) => state.exportTheme);
+  const setThemeStudioOpen = useLayoutStore((state) => state.setThemeStudioOpen);
 
   const [tab, setTab] = useState<StudioTab>('colors');
   const [importOpen, setImportOpen] = useState(false);
@@ -96,9 +108,28 @@ export default function ThemePage() {
   return (
     <>
       <PageHeader
-        title={t('theme:title')}
-        description={t('theme:subtitle')}
-        actions={dirty ? <Badge variant="soft-warning">{t('theme:unsaved.badge')}</Badge> : null}
+        title={t('theme:page.title')}
+        description={t('theme:page.subtitle')}
+        actions={
+          // The way back to the quick surface, next to the dirty badge. It is
+          // the same store flag the topbar button sets, so the drawer opens
+          // over this page and edits the same live document — which is exactly
+          // what someone who arrived here for a one-click preset change wants.
+          <div className="flex items-center gap-2">
+            {dirty ? <Badge variant="soft-warning">{t('theme:unsaved.badge')}</Badge> : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setThemeStudioOpen(true);
+              }}
+            >
+              <PanelRight aria-hidden />
+              {t('theme:studio.open')}
+            </Button>
+          </div>
+        }
       />
 
       <div className="grid gap-[var(--gap)] xl:grid-cols-[minmax(0,1fr)_20rem]">

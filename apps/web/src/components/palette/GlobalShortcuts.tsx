@@ -2,11 +2,12 @@ import { useEffect, useRef } from 'react';
 
 import { installGlobalShortcutListener, registerShortcut } from '@/lib/shortcuts';
 import type { RouteScope } from '@/hooks/useRouteScope';
+import { useLayoutStore } from '@/stores/useLayoutStore';
 import { usePaletteStore } from '@/stores/usePaletteStore';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * The app's global chords: `mod+k`, `?`, `c`.
+ * The app's global chords: `mod+k`, `?`, `mod+shift+t`, `c`.
  * ═══════════════════════════════════════════════════════════════════════════
  *
  * Renders nothing. It exists to own two effects with different lifetimes and
@@ -104,6 +105,36 @@ export default function GlobalShortcuts({ scope, signedIn }: GlobalShortcutsProp
         enabled: () => signedInRef.current && !overlayIsOpen(),
         handler: () => {
           usePaletteStore.getState().setCheatSheetOpen(true);
+        },
+      }),
+
+      registerShortcut({
+        id: 'theme.studio',
+        // `mod+shift+t` and not `mod+t`: every browser owns the latter (new
+        // tab) and cannot be talked out of it. Shift is also what keeps this
+        // clear of `t` alone, which stays free for a future single-key chord.
+        chord: 'mod+shift+t',
+        descriptionKey: 'palette:shortcuts.themeStudio',
+        group: 'system',
+        // A modifier chord, so it is safe from a text field — and appearance is
+        // exactly the thing someone reaches for mid-sentence when the contrast
+        // is wrong. It needs no org, no project and no admin rights.
+        allowInInputs: true,
+        // …but not over another modal (R2 W3.5). The drawer is a hand-rolled
+        // `aria-modal` surface with its own focus cycle and its own scroll lock;
+        // opening it on top of a Radix dialog gives the page two focus traps
+        // fighting for the same Tab and two `overflow:hidden` cleanups racing on
+        // one `body`. Same gate as `?`, for the same reason and via the same
+        // helper — which, note, does NOT see this drawer (it queries the
+        // `data-slot`s `ui/dialog` and `ui/sheet` stamp, and the drawer is
+        // neither), so the chord can still TOGGLE the drawer closed.
+        enabled: () => signedInRef.current && !overlayIsOpen(),
+        handler: () => {
+          // Toggle, not open: the same chord has to be able to put the drawer
+          // away, or a keyboard user who opened it by accident has to reach for
+          // Escape (or a mouse) to undo one keystroke.
+          const layout = useLayoutStore.getState();
+          layout.setThemeStudioOpen(!layout.themeStudioOpen);
         },
       }),
 

@@ -90,6 +90,8 @@ describe('schema barrel', () => {
     'organizations',
     'org_members',
     'invites',
+    // Round 2: the deployment-level singleton behind multi-org vs single-org.
+    'instance_settings',
     'teams',
     'team_members',
     'projects',
@@ -255,6 +257,15 @@ describe('check constraints', () => {
 
   it('makes an invite project grant all-or-nothing', () => {
     expect(checkNames(schema.invites)).toContain('invites_project_grant_complete');
+  });
+
+  /**
+   * "There is exactly one instance configuration" is a DATABASE guarantee, not a
+   * convention a service is trusted to keep: a second row would silently shadow
+   * the first depending on which one a `LIMIT 1` read.
+   */
+  it('pins the instance configuration to a single row', () => {
+    expect(checkNames(schema.instanceSettings)).toContain('instance_settings_singleton');
   });
 });
 

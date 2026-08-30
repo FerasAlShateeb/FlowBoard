@@ -35,6 +35,7 @@ import {
 } from '@/components/board/dnd';
 import { BoardCardOverlay } from '@/components/board/BoardCardOverlay';
 import { taskKeyOf } from '@/components/board/BoardCard';
+import { signalTaskDropped } from '@/components/board/DropSettle';
 
 /**
  * The board's drag runtime: sensors, collision detection, the drop pre-check,
@@ -266,7 +267,15 @@ export function BoardDndProvider({
         after: isAfterOverCentre(event.active.rect.current.translated, event.over?.rect),
       });
 
-      if (intent) move(intent);
+      if (!intent) return;
+      move(intent);
+      // The landing beat, addressed to the one card that moved. AFTER `move`,
+      // and only on an ACCEPTED drop: a rejected one has already produced a
+      // toast above, and a landing animation would contradict it. `setDrag(IDLE)`
+      // ran at the top of this handler, so dnd-kit's own transform is released
+      // in the same commit the spring is keyed off — the two never overlap.
+      // See `DropSettle.tsx` for why this is a module signal and not context.
+      signalTaskDropped(active.taskId);
     },
     [board.columns, drag.dropChecks, mode, move, statusById, statusName, t],
   );

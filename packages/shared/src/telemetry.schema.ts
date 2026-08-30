@@ -97,9 +97,26 @@ export const telemetryEventsQuerySchema = paginationQuerySchema.extend({
 });
 export type TelemetryEventsQuery = z.infer<typeof telemetryEventsQuerySchema>;
 
-/** An events-table row: the event plus the actor's name, joined for display. */
+/**
+ * An events-table row: the event plus the two names joined for display.
+ *
+ * BOTH NAMES ARE NULLABLE, and for the same reason: their id columns are.
+ * `telemetry_events.user_id` and `.project_id` are optional by design — a
+ * `page_view` on the login screen has neither, an `auth_login` has no project —
+ * and both carry `ON DELETE SET NULL`, so a hard-deleted row leaves the event
+ * standing with a null reference rather than taking it away. A SOFT-deleted
+ * (archived) project still resolves, which is what an audit feed wants: the
+ * history stays readable after the project it describes is switched off.
+ *
+ * `projectName` was added in R2 W3.5. Before it, the events feed's Project
+ * column rendered the raw `projectId` UUID beside a User column that already
+ * showed a name — a value no reader can act on, in a table whose whole job is
+ * to be read. The id STAYS in the payload (`projectId` is untouched): the feed's
+ * project filter takes it, the cell hovers it, and the CSV exports it.
+ */
 export const telemetryEventRowSchema = telemetryEventSchema.extend({
   userName: z.string().nullable(),
+  projectName: z.string().nullable(),
 });
 export type TelemetryEventRow = z.infer<typeof telemetryEventRowSchema>;
 

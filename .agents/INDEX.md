@@ -8,40 +8,44 @@ Every folder listed here has its own `INDEX.md` describing each file inside it.
 
 ## Where to go
 
-| I want to…                                                                                        | Read                                                                                                             |
-| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Understand the monorepo layout, the request lifecycle, the layering rule and its three exceptions | [docs/architecture.md](./docs/architecture.md)                                                                   |
-| Follow naming, the no-`any` gate, zod-at-boundaries, or the trio every mutation owes              | [docs/coding-standards.md](./docs/coding-standards.md)                                                           |
-| Find a `fb-*-v1` storage key, or register a new one                                               | [docs/coding-standards.md](./docs/coding-standards.md) → the storage-key registry                                |
-| Style anything, find a token, or hand-copy a shadcn primitive                                     | [docs/design-system.md](./docs/design-system.md)                                                                 |
-| Know whether a colour literal is allowed in a file                                                | [docs/design-system.md](./docs/design-system.md) → the hex-literal exemption table                               |
-| Touch the Drizzle schema, indexes, soft delete, or the seed                                       | [docs/database.md](./docs/database.md) + [workflows/db-migration.md](./workflows/db-migration.md)                |
-| Work on login, refresh, invites, `tokenVersion`, or the role matrix                               | [docs/auth.md](./docs/auth.md)                                                                                   |
-| Swap the auth backend for LDAP/AD                                                                 | [docs/auth.md](./docs/auth.md) → the `AuthProvider` seam                                                         |
-| **Add a translated string** or change user-facing copy                                            | [workflows/add-translated-string.md](./workflows/add-translated-string.md) → then [docs/i18n.md](./docs/i18n.md) |
-| Make a layout work right-to-left, or check whether a physical property is sanctioned              | [docs/i18n.md](./docs/i18n.md) → RTL mechanics + the exception table                                             |
-| Add a REST endpoint                                                                               | [workflows/add-api-endpoint.md](./workflows/add-api-endpoint.md)                                                 |
-| Build a new page or view                                                                          | [workflows/add-view.md](./workflows/add-view.md)                                                                 |
-| Broadcast a change to other clients                                                               | [workflows/add-socket-event.md](./workflows/add-socket-event.md) + [docs/realtime.md](./docs/realtime.md)        |
-| Notify someone when something happens                                                             | [workflows/add-notification-trigger.md](./workflows/add-notification-trigger.md)                                 |
-| Understand why an optimistic drag does not double-apply                                           | [docs/realtime.md](./docs/realtime.md) → echo suppression                                                        |
-| Emit a telemetry event or build an admin analytics chart                                          | [docs/telemetry.md](./docs/telemetry.md)                                                                         |
-| Touch the log ring buffer, `/api/admin/logs`, or the diagnostics drawer                           | [docs/diagnostics.md](./docs/diagnostics.md)                                                                     |
-| Write or run tests (unit, supertest integration, Playwright e2e)                                  | [docs/testing.md](./docs/testing.md)                                                                             |
-| Know my role, model, must-read docs, and definition-of-done as a subagent                         | [subagents/INDEX.md](./subagents/INDEX.md)                                                                       |
-| Verify FlowBoard against its spec                                                                 | [checklists/project-checklist.md](./checklists/project-checklist.md)                                             |
-| Review someone else's code                                                                        | [checklists/review-checklist.md](./checklists/review-checklist.md)                                               |
-| Learn what the product actually does, screen by screen                                            | [../docs/features-tour.md](../docs/features-tour.md)                                                             |
-| Get the stack running on a fresh machine                                                          | [../README.md](../README.md) + [../docs/docker-guide.md](../docs/docker-guide.md)                                |
+| I want to…                                                                                        | Read                                                                                                                |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Understand the monorepo layout, the request lifecycle, the layering rule and its three exceptions | [docs/architecture.md](./docs/architecture.md)                                                                      |
+| Follow naming, the no-`any` gate, zod-at-boundaries, or the trio every mutation owes              | [docs/coding-standards.md](./docs/coding-standards.md)                                                              |
+| Find a `fb-*-v1` storage key, or register a new one                                               | [docs/coding-standards.md](./docs/coding-standards.md) → the storage-key registry                                   |
+| Style anything, find a token, or hand-copy a shadcn primitive                                     | [docs/design-system.md](./docs/design-system.md)                                                                    |
+| Know whether a colour literal is allowed in a file                                                | [docs/design-system.md](./docs/design-system.md) → the hex-literal exemption table                                  |
+| Touch the Drizzle schema, indexes, soft delete, or the seed                                       | [docs/database.md](./docs/database.md) + [workflows/db-migration.md](./workflows/db-migration.md)                   |
+| Work on login, refresh, invites, `tokenVersion`, or the role matrix                               | [docs/auth.md](./docs/auth.md)                                                                                      |
+| Swap the auth backend for LDAP/AD                                                                 | [docs/auth.md](./docs/auth.md) → the `AuthProvider` seam                                                            |
+| **Add a translated string** or change user-facing copy                                            | [workflows/add-translated-string.md](./workflows/add-translated-string.md) → then [docs/i18n.md](./docs/i18n.md)    |
+| Make a layout work right-to-left, or check whether a physical property is sanctioned              | [docs/i18n.md](./docs/i18n.md) → RTL mechanics + the exception table                                                |
+| Add a REST endpoint                                                                               | [workflows/add-api-endpoint.md](./workflows/add-api-endpoint.md)                                                    |
+| Build a new page or view                                                                          | [workflows/add-view.md](./workflows/add-view.md)                                                                    |
+| Broadcast a change to other clients                                                               | [workflows/add-socket-event.md](./workflows/add-socket-event.md) + [docs/realtime.md](./docs/realtime.md)           |
+| Notify someone when something happens                                                             | [workflows/add-notification-trigger.md](./workflows/add-notification-trigger.md)                                    |
+| Understand why an optimistic drag does not double-apply                                           | [docs/realtime.md](./docs/realtime.md) → echo suppression                                                           |
+| Emit a telemetry event or build an ops chart                                                      | [docs/telemetry.md](./docs/telemetry.md)                                                                            |
+| Add a number to the analytics console, or understand the metric registry                          | [workflows/add-analytics-metric.md](./workflows/add-analytics-metric.md) + [docs/analytics.md](./docs/analytics.md) |
+| Touch `/admin/*`, instance settings, single-org mode, the nav shell, or view-as-member            | [docs/admin.md](./docs/admin.md)                                                                                    |
+| Make something move, or import the `motion` library                                               | [docs/motion.md](./docs/motion.md) → the closed registry and its grep test                                          |
+| Build a console page — a stat tile, a panel, a grid, a range picker                               | [docs/design-system.md](./docs/design-system.md) → §10, the dashboard primitive kit                                 |
+| Touch the log ring buffer, `/api/admin/logs`, or the diagnostics drawer                           | [docs/diagnostics.md](./docs/diagnostics.md)                                                                        |
+| Write or run tests (unit, supertest integration, Playwright e2e)                                  | [docs/testing.md](./docs/testing.md)                                                                                |
+| Know my role, model, must-read docs, and definition-of-done as a subagent                         | [subagents/INDEX.md](./subagents/INDEX.md)                                                                          |
+| Verify FlowBoard against its spec                                                                 | [checklists/project-checklist.md](./checklists/project-checklist.md)                                                |
+| Review someone else's code                                                                        | [checklists/review-checklist.md](./checklists/review-checklist.md)                                                  |
+| Learn what the product actually does, screen by screen                                            | [../docs/features-tour.md](../docs/features-tour.md)                                                                |
+| Get the stack running on a fresh machine                                                          | [../README.md](../README.md) + [../docs/docker-guide.md](../docs/docker-guide.md)                                   |
 
 ## Folder map
 
-| Folder                                 | Purpose                                                                                                                                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`docs/`](./docs/INDEX.md)             | Reference documentation: architecture, coding standards, design system, database, auth, i18n, diagnostics, telemetry, realtime, testing. **What is true**, verified against the code. |
-| [`workflows/`](./workflows/INDEX.md)   | Step-by-step procedures for the six multi-file tasks that are easy to get wrong. **What to do**, in order, with a checklist.                                                          |
-| [`checklists/`](./checklists/INDEX.md) | The master project checklist (the verification backbone) and the reviewer checklist. **What to prove**, with evidence.                                                                |
-| [`subagents/`](./subagents/INDEX.md)   | Role cards: mission, model/effort, must-reads, file ownership, definition-of-done. **Who does what**, and with which model.                                                           |
+| Folder                                 | Purpose                                                                                                                                                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`docs/`](./docs/INDEX.md)             | Reference documentation: architecture, coding standards, design system, database, auth, admin, analytics, i18n, motion, diagnostics, telemetry, realtime, testing. **What is true**, verified against the code. |
+| [`workflows/`](./workflows/INDEX.md)   | Step-by-step procedures for the seven multi-file tasks that are easy to get wrong. **What to do**, in order, with a checklist.                                                                                  |
+| [`checklists/`](./checklists/INDEX.md) | The master project checklist (the verification backbone) and the reviewer checklist. **What to prove**, with evidence.                                                                                          |
+| [`subagents/`](./subagents/INDEX.md)   | Role cards: mission, model/effort, must-reads, file ownership, definition-of-done. **Who does what**, and with which model.                                                                                     |
 
 ## Conventions for this tree
 
@@ -83,9 +87,17 @@ still load-bearing:
   because those primitives now render every screen in the product.
 - **The stitch files** (`apps/api/src/routes/index.ts`,
   `apps/web/src/routes/index.tsx`, `apps/web/src/locales/{en,ar}/index.ts`,
-  `apps/web/src/lib/query-keys.ts`, `packages/shared/src/index.ts`) are still the
-  files two parallel agents will collide on. Request an entry rather than editing
-  one mid-flight.
+  `apps/web/src/lib/query-keys.ts`, `packages/shared/src/index.ts`, and — since
+  Round 2 — `apps/web/src/main.tsx`, `apps/api/src/db/schema/index.ts` and the
+  appended blocks at the bottom of `apps/web/src/index.css`) are still the files
+  two parallel agents will collide on. Request an entry rather than editing one
+  mid-flight; several of them carry a **ROUND 2 FREEZE** banner naming who may.
+
+A second round ran the same pattern over four areas the first left short:
+instance administration and single-org mode, the analytics console, the Theme
+Studio drawer, and motion. It added `docs/{admin,analytics,motion}.md`, seven
+`components/ui/*` primitives, the `components/dashboard/**` kit, and §G of the
+project checklist.
 
 The build is complete: the tree carries no `TODO(wave-N)` markers, and an
 unticked checklist box means "not yet verified with evidence", never "not yet

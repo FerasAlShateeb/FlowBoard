@@ -19,6 +19,7 @@ import {
   isOverdue,
 } from '@/components/board/board-meta';
 import type { BoardDragCard } from '@/components/board/dnd';
+import { DropSettle } from '@/components/board/DropSettle';
 
 /**
  * The board card — the densest component in FlowBoard, and the one it renders
@@ -281,7 +282,17 @@ function BoardCardImpl({ drag, onOpen, disabled = false, ...face }: BoardCardPro
       }}
       aria-label={t('board:card.open', { key })}
     >
-      <BoardCardFace {...face} />
+      {/*
+        The settle wraps the FACE, inside the sortable node — never around it.
+        The outer div owns dnd-kit's live `transform`/`transition`, and a second
+        animated transform on the same element would fight it mid-drag; nesting
+        keeps the two on different nodes, so the spring can only ever run after
+        dnd-kit has released its own. Focus also lives on the outer div, so the
+        settle's remount cannot steal it from a keyboard drop.
+      */}
+      <DropSettle taskId={drag.taskId}>
+        <BoardCardFace {...face} />
+      </DropSettle>
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { LoginResponse, User } from '@flowboard/shared';
 
+import { VIEW_MODE_STORAGE_KEY } from '@/components/navigation/view-as';
+
 /**
  * The session store: the JWT pair and a summary of who is signed in.
  *
@@ -31,6 +33,36 @@ export type AuthSession = LoginResponse;
 
 /** Session key (conventions: `fb-<name>-v1`). */
 export const AUTH_STORAGE_KEY = 'fb-auth-v1';
+
+/**
+ * The "view as member" flag, read and written OUTSIDE the persisted session.
+ *
+ * WHY ITS OWN KEY (`fb-view-mode-v1`) RATHER THAN A FIELD IN `fb-auth-v1`. The
+ * session blob is byte-for-byte what `POST /auth/login` returned and
+ * `loginResponseSchema` parsed — that alias-not-copy property is what makes a
+ * contract change a compile error here instead of a stored session that no
+ * longer matches the API. A local view preference is not part of that payload,
+ * and adding it would break the identity. Two concerns, two keys.
+ *
+ * Both helpers swallow storage failures: private mode, blocked cookies and a
+ * node test with no shim all end with the flag living in memory only, which is
+ * a degraded preference rather than a crashed shell.
+ */
+function loadViewingAsMember(): boolean {
+  try {
+    return localStorage.getItem(VIEW_MODE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function persistViewingAsMember(value: boolean): void {
+  try {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, value ? '1' : '0');
+  } catch {
+    // Storage unavailable; the flag still lives in state for this tab.
+  }
+}
 
 interface AuthState {
   accessToken: string | null;
@@ -65,10 +97,39 @@ interface AuthState {
    * invalidate the next one.
    */
   sessionGeneration: number;
+  /**
+   * "Show me the product as a plain member sees it" — a global admin's own
+   * preview switch. Persisted under `fb-view-mode-v1`, so it survives a reload
+   * (the whole point: you look around, you come back tomorrow, you are still
+   * looking around) but NOT a sign-out, which is where {@link
+   * AuthState.clearSession} resets it.
+   *
+   * Meaningless for a non-admin — {@link AuthState.isEffectiveGlobalAdmin} is
+   * false for them either way — and never trusted by the API.
+   */
+  viewingAsMember: boolean;
   /** True once a token exists. NOT proof it is still valid — see RequireAuth. */
   isAuthenticated: () => boolean;
-  /** Global-admin flag from the last session payload; the API re-checks it. */
+  /**
+   * The REAL global-admin flag from the last session payload; the API re-checks
+   * it.
+   *
+   * This is the one that gates the view-as switch itself and the "viewing as
+   * member" pill — the controls that must stay reachable precisely BECAUSE the
+   * effective flag has gone false. Everything that decides what the product
+   * looks like uses {@link AuthState.isEffectiveGlobalAdmin} instead.
+   */
   isGlobalAdmin: () => boolean;
+  /**
+   * The flag every piece of CHROME asks: admin, and not currently pretending
+   * otherwise.
+   *
+   * Sidebar sections, palette rows, the org switcher's admin footer and
+   * `RequireGlobalAdmin` all read this. Nothing on the server does.
+   */
+  isEffectiveGlobalAdmin: () => boolean;
+  /** Enter or leave member view. Persists; the navigation is the caller's. */
+  setViewingAsMember: (value: boolean) => void;
   /** Store a freshly issued session (login, invite acceptance, refresh). */
   setSession: (session: AuthSession) => void;
   /**
@@ -102,9 +163,16 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       user: null,
       sessionGeneration: 0,
+      viewingAsMember: loadViewingAsMember(),
 
       isAuthenticated: () => get().accessToken !== null,
       isGlobalAdmin: () => get().user?.isGlobalAdmin === true,
+      isEffectiveGlobalAdmin: () => get().isGlobalAdmin() && !get().viewingAsMember,
+
+      setViewingAsMember: (value) => {
+        persistViewingAsMember(value);
+        set({ viewingAsMember: value });
+      },
 
       setSession: ({ accessToken, refreshToken, user }) => {
         set({ accessToken, refreshToken, user, sessionGeneration: get().sessionGeneration + 1 });
@@ -120,10 +188,16 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearSession: () => {
+        // The view preference is dropped WITH the session, deliberately. It is
+        // persisted so it survives a reload, not so it survives a change of
+        // person: the next admin to sign in on this device would otherwise
+        // arrive to a console with no Administration section and no idea why.
+        persistViewingAsMember(false);
         set({
           accessToken: null,
           refreshToken: null,
           user: null,
+          viewingAsMember: false,
           sessionGeneration: get().sessionGeneration + 1,
         });
       },
@@ -134,7 +208,9 @@ export const useAuthStore = create<AuthState>()(
       // Only the data, never the actions. Persisting a function is impossible
       // anyway, but being explicit also means a future derived field does not
       // silently become part of the stored payload. `sessionGeneration` is
-      // deliberately absent — it is an in-tab comparison, not stored state.
+      // deliberately absent — it is an in-tab comparison, not stored state —
+      // and so is `viewingAsMember`, which owns `fb-view-mode-v1` for the
+      // reason spelled out above `loadViewingAsMember`.
       partialize: (state) => ({
         accessToken: state.accessToken,
         refreshToken: state.refreshToken,

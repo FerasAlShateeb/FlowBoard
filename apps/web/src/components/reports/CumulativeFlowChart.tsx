@@ -25,10 +25,12 @@ import {
   AXIS_TICK,
   CHART_CHROME,
   CHART_SERIES,
+  chartAnimation,
   DASH,
   PLANNED_FILL_OPACITY,
   PLOT_MARGIN,
   fillOpacityFor,
+  useColdChart,
 } from './chart-theme';
 import { cumulativeFlowHeadline } from './report-summaries';
 
@@ -72,6 +74,9 @@ export function toFlowRows(days: readonly CumulativeFlowDay[]): FlowRow[] {
 export function CumulativeFlowChart({ days }: { days: readonly CumulativeFlowDay[] }) {
   const { t } = useTranslation(['reports']);
   const format = useChartFormat();
+  // Registry entry #6: a COLD load draws itself in, a warm refetch does not,
+  // and Reduced motion never does. One call, spread onto every series below.
+  const animation = chartAnimation(useColdChart());
   const rows = useMemo(() => toFlowRows(days), [days]);
   const headline = cumulativeFlowHeadline(days);
 
@@ -148,7 +153,7 @@ export function CumulativeFlowChart({ days }: { days: readonly CumulativeFlowDay
             stroke={CHART_SERIES.quiet}
             fill={CHART_SERIES.quiet}
             fillOpacity={plannedFill}
-            isAnimationActive={false}
+            {...animation}
           />
           <Area
             type="monotone"
@@ -157,7 +162,7 @@ export function CumulativeFlowChart({ days }: { days: readonly CumulativeFlowDay
             stroke={CHART_SERIES.primary}
             fill={CHART_SERIES.primary}
             fillOpacity={areaFill}
-            isAnimationActive={false}
+            {...animation}
           />
           <Area
             type="monotone"
@@ -166,7 +171,7 @@ export function CumulativeFlowChart({ days }: { days: readonly CumulativeFlowDay
             stroke={CHART_SERIES.delivered}
             fill={CHART_SERIES.delivered}
             fillOpacity={areaFill}
-            isAnimationActive={false}
+            {...animation}
           />
         </AreaChart>
       </ResponsiveContainer>

@@ -7,8 +7,13 @@ import {
 } from '@tanstack/react-query';
 import { z } from 'zod';
 import {
+  adminUserRowSchema,
+  deleteUserResponseSchema,
   userSchema,
   type AdminUpdateUserInput,
+  type AdminUserRow,
+  type DeleteUserResponse,
+  type OrgRole,
   type PaginationMeta,
   type ProvisionUserInput,
   type User,
@@ -21,7 +26,7 @@ import { useApiErrorToast } from '@/i18n/errors';
 /**
  * `/api/admin/users` — the global-admin user directory.
  *
- * ═══ FOUR ENDPOINTS, AND ONLY ONE OF THEM IS A LIST ═══════════════════════
+ * ═══ FIVE ENDPOINTS, AND ONLY ONE OF THEM IS A LIST ═══════════════════════
  *
  * The API deliberately does NOT expose `/activate`, `/deactivate`,
  * `/promote` and `/force-logout` as separate routes: activating a user,
@@ -50,7 +55,17 @@ import { useApiErrorToast } from '@/i18n/errors';
 
 const BASE = '/admin/users';
 
-const userListSchema = z.array(userSchema);
+/**
+ * The LIST row, not the bare account.
+ *
+ * `adminUserRowSchema` is `userSchema` plus `memberships[]` — the denormalized
+ * `{orgId, orgName, orgSlug, role}` per organization the account belongs to.
+ * Parsing with the narrower `userSchema` would SILENTLY DROP it (zod objects
+ * strip unknown keys), which is exactly the failure the org home page hit with
+ * `teamCount`: a column reading a field that had been thrown away one layer
+ * down. The memberships column and the manage-memberships dialog both read this.
+ */
+const userListSchema = z.array(adminUserRowSchema);
 
 /** The filters the directory offers. Both are optional and both are server-side. */
 export interface AdminUserFilters {
@@ -62,7 +77,7 @@ export interface AdminUserFilters {
 
 /** One page of the directory: the rows, plus the envelope's pagination meta. */
 export interface AdminUsersPage {
-  rows: User[];
+  rows: AdminUserRow[];
   meta: PaginationMeta | undefined;
 }
 
@@ -175,6 +190,97 @@ export function useResetUserPassword() {
       api.post<void>(`${BASE}/${userId}/reset-password`, { password }),
     onError,
   });
+}
+
+/**
+ * `DELETE /admin/users/:userId` — ANONYMIZE AND DEACTIVATE, never a hard delete.
+ *
+ * The row survives with its identity scrubbed: the name becomes "Deleted user",
+ * the address is rewritten to a unique `deleted+<uuid>@flowboard.invalid`, the
+ * avatar is cleared, `isActive` goes false and `token_version` is bumped —
+ * which revokes every live session immediately. A user id authors comments,
+ * acts on activity rows and assigns history that has to keep reading correctly,
+ * so dropping the row would either cascade that history away or leave dangling
+ * references.
+ *
+ * The response carries the SCRUBBED row plus `membershipsRemoved`, so the
+ * confirmation can say what access was actually revoked. Every org prefix is
+ * invalidated alongside the directory, because the memberships that went with
+ * the account were rows in those lists.
+ */
+export function useDeleteAdminUser() {
+  const queryClient = useQueryClient();
+  const onError = useApiErrorToast();
+
+  return useMutation({
+    mutationFn: (userId: string) =>
+      api.del<DeleteUserResponse>(`${BASE}/${userId}`, { schema: deleteUserResponseSchema }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: USERS_PREFIX });
+      void queryClient.invalidateQueries({ queryKey: qk.orgs.all() });
+      void queryClient.invalidateQueries({ queryKey: qk.adminOrgs.all() });
+    },
+    onError,
+  });
+}
+
+/**
+ * The three per-org membership writes, with the ORG ID PER CALL.
+ *
+ * `useOrgs` already exposes `useAddOrgMember(orgId)` / `useUpdateOrgMember` /
+ * `useRemoveOrgMember`, and they are the right shape for an organization's own
+ * members page — one org, fixed for the life of the screen. They are the wrong
+ * shape for the admin directory's membership dialog, which edits SEVERAL
+ * organizations for one account in one sitting: a hook bound to an id at mount
+ * would need remounting (and would reset its own pending state) every time the
+ * admin picked a different org from the select.
+ *
+ * So this is the same three routes with the id in the variables. Nothing about
+ * the requests differs — the endpoints, the bodies and the org-admin floor are
+ * identical; a global admin simply passes that floor everywhere.
+ *
+ * ONE HOOK RETURNING THREE MUTATIONS rather than three hooks, because the
+ * dialog needs a single "is anything in flight" answer to disable itself with,
+ * and three separate `isPending` flags is the shape where two of them get
+ * forgotten.
+ */
+export function useOrgMembershipMutations() {
+  const queryClient = useQueryClient();
+  const onError = useApiErrorToast();
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: USERS_PREFIX });
+    void queryClient.invalidateQueries({ queryKey: qk.orgs.all() });
+    void queryClient.invalidateQueries({ queryKey: qk.adminOrgs.all() });
+  };
+
+  const add = useMutation({
+    mutationFn: ({ orgId, userId, role }: { orgId: string; userId: string; role: OrgRole }) =>
+      api.post<void>(`/orgs/${orgId}/members`, { userId, role }),
+    onSuccess: invalidate,
+    onError,
+  });
+
+  const update = useMutation({
+    mutationFn: ({ orgId, userId, role }: { orgId: string; userId: string; role: OrgRole }) =>
+      api.patch<void>(`/orgs/${orgId}/members/${userId}`, { role }),
+    onSuccess: invalidate,
+    onError,
+  });
+
+  const remove = useMutation({
+    mutationFn: ({ orgId, userId }: { orgId: string; userId: string }) =>
+      api.del<void>(`/orgs/${orgId}/members/${userId}`),
+    onSuccess: invalidate,
+    onError,
+  });
+
+  return {
+    add,
+    update,
+    remove,
+    isPending: add.isPending || update.isPending || remove.isPending,
+  };
 }
 
 /**

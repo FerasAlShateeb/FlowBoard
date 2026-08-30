@@ -55,6 +55,19 @@ export default {
       status: 'Status',
       created: 'Added',
       actions: 'Actions',
+      memberships: 'Organizations',
+    },
+
+    tableLabel: 'User accounts',
+    exportCsv: 'Export CSV',
+    exportName: 'flowboard-users',
+    csv: {
+      name: 'Name',
+      email: 'Email',
+      access: 'Access',
+      status: 'Status',
+      organizations: 'Organizations',
+      created: 'Added',
     },
 
     badge: {
@@ -78,6 +91,76 @@ export default {
       demote: 'Revoke global admin',
       resetPassword: 'Reset password',
       forceLogout: 'Sign out everywhere',
+      memberships: 'Manage memberships…',
+      delete: 'Delete user…',
+    },
+
+    /**
+     * The memberships column and its dialog.
+     *
+     * `none` is a real, common answer rather than an error state: a freshly
+     * provisioned global admin belongs to no organization at all, and a table
+     * cell that showed a spinner for that would be describing a state the
+     * product does not have.
+     */
+    memberships: {
+      none: 'None',
+      overflow: '+{{overflow}}',
+      cell: '{{names}}',
+      title: 'Organizations for {{name}}',
+      description:
+        'Add this account to an organization, change the role it holds there, or remove it. Changes apply immediately.',
+      current: 'Member of',
+      empty: 'This account is not in any organization yet.',
+      addTitle: 'Add to an organization',
+      org: 'Organization',
+      orgPlaceholder: 'Pick an organization',
+      role: 'Role',
+      add: 'Add',
+      remove: 'Remove from {{org}}',
+      roleFor: 'Role in {{org}}',
+      noneLeft: 'This account is already in every organization.',
+      added: 'Added to {{org}}',
+      removed: 'Removed from {{org}}',
+      roleChanged: 'Role in {{org}} updated',
+    },
+
+    /** Org roles, spelled out — a bare "Admin" is ambiguous next to a global one. */
+    orgRole: {
+      admin: 'Organization admin',
+      member: 'Member',
+    },
+
+    /**
+     * Deletion. The copy leads with what actually happens — the row survives,
+     * scrubbed — because an admin who expects a hard delete and gets an
+     * anonymized account has been surprised by the product rather than informed
+     * by it.
+     */
+    delete: {
+      title: 'Delete {{name}}?',
+      body: 'The account is anonymized rather than erased: the name becomes “Deleted user”, the email address is replaced, the avatar is cleared, and every session is revoked immediately.',
+      keeps:
+        'Their comments, activity and task history stay intact and keep reading correctly — they are simply no longer attributed to a person.',
+      memberships: 'They are removed from every organization they belong to.',
+      confirmHint: 'Type {{value}} to confirm',
+      submit: 'Delete account',
+      /**
+       * A PLURAL key, not `{{orgs}} organizations` (W3.2).
+       *
+       * The count comes from `membershipsRemoved` on the delete response and is
+       * most often 0 or 1 — the two values a hard-coded plural noun gets wrong.
+       * English read "removed from 1 organizations"; Arabic, whose numeral
+       * agreement has six forms rather than two, was wrong for every count
+       * except three-to-ten. `_zero` is not an English CLDR category, so the
+       * "belonged to nothing" case rides on `_other` reading naturally at zero
+       * ("removed from 0 organizations" is not a sentence) — hence the phrasing
+       * below, which drops the clause entirely when there is nothing to report.
+       */
+      done_one: '{{name}} was deleted and removed from {{count}} organization',
+      done_other: '{{name}} was deleted and removed from {{count}} organizations',
+      doneNoOrgs: '{{name}} was deleted',
+      selfGuard: 'You cannot delete your own account.',
     },
 
     provision: {
@@ -91,6 +174,17 @@ export default {
       globalAdminHint: 'Full access to every organization, plus these admin pages.',
       submit: 'Create account',
       created: 'Account created for {{name}}',
+      /**
+       * The org grants handed out in the same request. One transaction rather
+       * than "create, then add member, then add member": the multi-request
+       * version has two chances to half-succeed and leave an account that
+       * exists but belongs nowhere.
+       */
+      orgs: 'Organizations',
+      orgsHint: 'Optional. The account is created and added to these in one step.',
+      orgsEmpty: 'Not in any organization yet.',
+      addOrg: 'Add organization',
+      noOrgs: 'This deployment has no organizations yet.',
     },
 
     password: {
@@ -230,6 +324,10 @@ export default {
       type: 'Event',
       user: 'User',
       project: 'Project',
+      // CSV ONLY. The grid shows the project's NAME and keeps the id on the
+      // cell's `title`; the export gives the id its own column so a spreadsheet
+      // can join this file against another one.
+      projectId: 'Project ID',
       details: 'Show payload',
     },
     filter: {
@@ -240,6 +338,265 @@ export default {
     },
     empty: 'No events match these filters',
     emptyBody: 'Widen the time range, or clear the event-type filter.',
+  },
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Round 2 — instance administration (W2.1)
+  //
+  // Four surfaces that did not exist before: the admin LANDING page, the
+  // organizations console, the cross-org projects overview, and the instance
+  // settings form. They share the `admin` namespace with the telemetry pages
+  // above because they share a nav section and an audience; nothing here reuses
+  // a telemetry key, and `platform.*` is deliberately NOT called `overview.*` —
+  // that name is already the telemetry KPI row's.
+  // ═════════════════════════════════════════════════════════════════════════
+
+  /**
+   * `/admin/overview` — the admin landing page.
+   *
+   * The captions under each KPI state the exact window the number covers, for
+   * the same reason the telemetry hints do: "Users: 42" is a number two people
+   * will quote to mean two different things.
+   *
+   * Interpolated values arrive PRE-FORMATTED (Latin digits, grouped by
+   * `lib/format`), so i18next never reformats them — and no placeholder is
+   * named `count`, which i18next reserves for pluralization.
+   */
+  platform: {
+    title: 'Platform overview',
+    description: 'Every account, organization and project on this instance, at a glance.',
+    autoRefresh: 'Auto-refresh',
+    autoRefreshLabel: 'Refresh every 30s',
+
+    kpi: {
+      users: 'Users',
+      usersCaption: '{{active}} active in the last 30 days',
+      usersLink: 'Open the user directory',
+      orgs: 'Organizations',
+      orgsCaption: 'Live organizations on this instance',
+      orgsLink: 'Open the organizations console',
+      projects: 'Projects',
+      projectsCaption: 'Across every organization',
+      projectsLink: 'Open the projects overview',
+      tasks: 'Tasks',
+      tasksCaption: '{{completed}} completed in the last 30 days',
+      tasksLink: 'Open the work analytics',
+      errorRate: 'Error rate',
+      errorRateCaption: 'Failed requests, last 24 hours',
+      errorRateLink: 'Open the traffic analytics',
+    },
+
+    events: {
+      title: 'Activity',
+      info: 'Telemetry events per day over the last 14 days. This window is fixed: a health summary whose sparkline rescales with a range picker is one nobody can read at a glance.',
+      series: 'Events',
+      summary: '{{events}} events over the last 14 days, peaking at {{peak}} in a day.',
+      empty: 'No activity recorded yet',
+      emptyBody: 'Events appear here as people use FlowBoard.',
+    },
+
+    requests: {
+      title: 'API traffic',
+      info: 'HTTP requests per hour over the last 24 hours. Quiet hours are drawn as zero rather than skipped, so an outage reads as a gap in traffic instead of a straight line across it.',
+      series: 'Requests',
+      summary: '{{requests}} requests over the last 24 hours, peaking at {{peak}} in an hour.',
+      empty: 'No traffic in the last 24 hours',
+      emptyBody: 'Nothing has been served since yesterday.',
+    },
+  },
+
+  /**
+   * `/admin/orgs` — the organizations console.
+   *
+   * "Archive", never "delete": the operation is a soft delete that
+   * {@link orgs.restore} undoes, and calling it delete would make the restore
+   * row read as an undo of something the copy said was permanent.
+   */
+  orgs: {
+    title: 'Organizations',
+    description: 'Every organization on this instance, archived ones included.',
+    tableLabel: 'Organizations',
+
+    facet: {
+      q: 'Name or slug',
+      qPlaceholder: 'Search organizations',
+    },
+    showArchived: 'Show archived',
+    showArchivedHint: 'Archived organizations are hidden until you ask for them.',
+
+    column: {
+      name: 'Organization',
+      members: 'Members',
+      projects: 'Projects',
+      created: 'Created',
+      status: 'Status',
+    },
+
+    badge: {
+      archived: 'Archived',
+      archivedOn: 'Archived {{date}}',
+      live: 'Live',
+    },
+
+    empty: 'No organizations yet',
+    emptyBody: 'Create the first one — it becomes the workspace projects live in.',
+    noResults: 'No organization matches these filters',
+
+    rowMenu: 'Actions for {{name}}',
+    actions: {
+      create: 'New organization',
+      open: 'Open organization',
+      rename: 'Rename…',
+      archive: 'Archive…',
+      restore: 'Restore',
+    },
+
+    create: {
+      title: 'New organization',
+      description:
+        'You become its first administrator. Projects, teams and members all live inside an organization.',
+      name: 'Name',
+      slug: 'URL slug',
+      slugHint: 'Appears in every link: /o/<slug>. Lowercase letters, numbers and hyphens.',
+      submit: 'Create organization',
+      created: '{{name}} created',
+    },
+
+    rename: {
+      title: 'Rename {{name}}',
+      description:
+        'Changing the slug changes every URL under this organization. Existing links stop resolving.',
+      submit: 'Save changes',
+      renamed: '{{name}} updated',
+    },
+
+    archive: {
+      title: 'Archive {{name}}?',
+      body: 'Its projects, teams and tasks stop being reachable and it disappears from every switcher. Nothing is erased — you can restore it from this table.',
+      confirmHint: 'Type {{value}} to confirm',
+      submit: 'Archive organization',
+      archived: '{{name}} archived',
+    },
+
+    restore: {
+      restored: '{{name}} restored',
+      conflict:
+        'Another organization now uses the slug “{{slug}}”. Re-slug that one, then restore this.',
+    },
+
+    singleMode: {
+      title: 'This instance runs in single-organization mode',
+      body: '{{name}} is the workspace: the organization switcher is hidden and every link resolves inside it. Creating another organization is still allowed, but it stays invisible to everyone until the mode changes.',
+      bodyNoDefault:
+        'No default organization is set, so the app has nowhere to send people. Pick one in instance settings, or switch back to multi-organization mode.',
+      link: 'Instance settings',
+    },
+  },
+
+  /**
+   * `/admin/projects` — the cross-organization projects overview.
+   *
+   * Read-only by design: a project's settings belong to the project, and a
+   * console that could edit one from outside its organization would need to
+   * re-implement every guard the project pages already enforce.
+   */
+  projects: {
+    title: 'Projects',
+    description: 'Every project across every organization, with what is happening inside it.',
+    tableLabel: 'Projects',
+
+    facet: {
+      q: 'Name or key',
+      qPlaceholder: 'Search projects',
+      org: 'Organization',
+      archived: 'Archived',
+      archivedInclude: 'Include archived',
+    },
+
+    column: {
+      key: 'Key',
+      name: 'Project',
+      org: 'Organization',
+      lead: 'Lead',
+      members: 'Members',
+      tasks: 'Open / total',
+      activity: 'Last activity',
+      status: 'Status',
+    },
+
+    value: {
+      noLead: 'No lead',
+      neverActive: 'Never',
+      tasks: '{{open}} / {{total}}',
+    },
+
+    badge: {
+      archived: 'Archived',
+      // Both states are named, matching `/admin/orgs` — see the note on the
+      // Status column in `AdminProjectsPage`.
+      archivedOn: 'Archived {{date}}',
+      live: 'Live',
+    },
+
+    empty: 'No projects yet',
+    emptyBody: 'Projects created inside any organization appear here.',
+    noResults: 'No project matches these filters',
+
+    rowMenu: 'Actions for {{name}}',
+    actions: {
+      openBoard: 'Open board',
+      openOrg: 'Open organization',
+    },
+  },
+
+  /**
+   * `/admin/settings` — the instance singleton.
+   *
+   * The mode explanation is written the way a self-hosted operator reads it:
+   * what changes on screen, not what changes in the database.
+   */
+  settings: {
+    title: 'Instance settings',
+    description: 'How this deployment presents itself to everyone signed in.',
+
+    identity: {
+      title: 'Identity',
+      description: 'What this deployment calls itself.',
+      name: 'Instance name',
+      nameHint: 'Shown wherever the deployment names itself. It does not rename the product.',
+    },
+
+    mode: {
+      title: 'Organization mode',
+      description: 'Whether this deployment is a platform of many organizations, or one workspace.',
+      label: 'Mode',
+      multi: 'Multiple organizations',
+      multiHint:
+        'The shipped shape: people can belong to several organizations and switch between them.',
+      single: 'Single organization',
+      singleHint: 'One organization is the whole workspace.',
+    },
+
+    modeAlert: {
+      title: 'What single-organization mode changes',
+      body: 'The organization switcher is hidden, the home page resolves straight into the default organization, and the sidebar scopes itself to it. Nothing is deleted and no data model changes — other organizations simply stop being reachable from the interface. Switch back at any time.',
+    },
+
+    defaultOrg: {
+      label: 'Default organization',
+      hint: 'Where single-organization mode sends everyone. Only live organizations can be chosen.',
+      placeholder: 'Pick an organization',
+      none: 'None',
+      required: 'Single-organization mode needs a default organization. Pick one.',
+      invalid: 'That organization no longer exists, or has been archived. Pick another.',
+      loading: 'Loading organizations…',
+      empty: 'This deployment has no organizations yet. Create one before switching modes.',
+    },
+
+    save: 'Save settings',
+    saved: 'Instance settings saved',
+    unchanged: 'No changes to save',
+    lastUpdated: 'Last changed {{date}}',
   },
 
   /** One label per member of the shared closed enum — see the file header. */

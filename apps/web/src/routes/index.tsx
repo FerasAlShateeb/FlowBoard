@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter, type RouteObject } from 'react-router-dom';
+import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom';
 
 import AppShell from '@/components/layout/AppShell';
 import PageSpinner from '@/components/common/PageSpinner';
@@ -26,6 +26,14 @@ import '@/lib/chunk-recovery';
  *
  * The table itself is FINAL. Wave 2/3/4 agents replace the page modules at
  * these exact paths; they do not add or move routes.
+ *
+ * ── ROUND 2 FREEZE ──────────────────────────────────────────────────────────
+ * The same contract, one round later. W1.0 added every Round 2 route — the four
+ * instance-admin pages and the five analytics ones — pointing at STUB modules
+ * it created for the purpose (each stub's header names the package that
+ * replaces it). W3.1 is the only package allowed to edit this file again:
+ * W1.1–W1.5 and W2.1–W2.4 replace the modules these entries point at, and do
+ * not add, move or rename an entry here.
  */
 
 // ── Public ──────────────────────────────────────────────────────────────────
@@ -66,6 +74,19 @@ const AdminUsersPage = lazy(() => import('@/pages/admin/AdminUsersPage'));
 const AdminTelemetryPage = lazy(() => import('@/pages/admin/AdminTelemetryPage'));
 const AdminTelemetryEventsPage = lazy(() => import('@/pages/admin/AdminTelemetryEventsPage'));
 const AdminTelemetryRequestsPage = lazy(() => import('@/pages/admin/AdminTelemetryRequestsPage'));
+
+// ── Global admin: instance administration (Round 2, W2.1) ───────────────────
+const AdminOverviewPage = lazy(() => import('@/pages/admin/AdminOverviewPage'));
+const AdminOrgsPage = lazy(() => import('@/pages/admin/AdminOrgsPage'));
+const AdminProjectsPage = lazy(() => import('@/pages/admin/AdminProjectsPage'));
+const AdminSettingsPage = lazy(() => import('@/pages/admin/AdminSettingsPage'));
+
+// ── Global admin: the analytics console (Round 2, W2.2) ─────────────────────
+const AnalyticsEngagementPage = lazy(() => import('@/pages/admin/AnalyticsEngagementPage'));
+const AnalyticsWorkPage = lazy(() => import('@/pages/admin/AnalyticsWorkPage'));
+const AnalyticsTrafficPage = lazy(() => import('@/pages/admin/AnalyticsTrafficPage'));
+const AnalyticsGrowthPage = lazy(() => import('@/pages/admin/AnalyticsGrowthPage'));
+const AnalyticsDetailPage = lazy(() => import('@/pages/admin/AnalyticsDetailPage'));
 
 /** Wraps a route element in a full-page Suspense boundary (outside the shell). */
 function standalone(element: ReactNode): ReactNode {
@@ -174,10 +195,42 @@ export const router = createBrowserRouter([
           {
             element: <RequireGlobalAdmin />,
             children: [
+              /**
+               * `/admin` is a DESTINATION, not just a prefix. The sidebar, the
+               * breadcrumb root and the command palette all offer "Administration"
+               * as one place to go, and before Round 2 that URL matched nothing but
+               * the `*` catch-all — an admin who typed it got a 404 inside their own
+               * console. It redirects rather than rendering the overview in place so
+               * that exactly one URL owns the page: a bookmark, a share and a
+               * breadcrumb all read `/admin/overview`.
+               */
+              { path: '/admin', element: <Navigate to="/admin/overview" replace /> },
+              { path: '/admin/overview', element: <AdminOverviewPage /> },
+              { path: '/admin/orgs', element: <AdminOrgsPage /> },
+              { path: '/admin/projects', element: <AdminProjectsPage /> },
+              { path: '/admin/settings', element: <AdminSettingsPage /> },
+
               { path: '/admin/users', element: <AdminUsersPage /> },
               { path: '/admin/telemetry', element: <AdminTelemetryPage /> },
               { path: '/admin/telemetry/events', element: <AdminTelemetryEventsPage /> },
               { path: '/admin/telemetry/requests', element: <AdminTelemetryRequestsPage /> },
+
+              /**
+               * The analytics console: four fixed domain dashboards, then ONE
+               * generic drill-down for every metric in the registry.
+               *
+               * `/admin/analytics/:domain/:metric` cannot shadow the four above —
+               * it is three segments deep where they are two — and react-router
+               * ranks a static segment over a dynamic one regardless. The
+               * drill-down validates `:domain` against `analyticsDomainSchema` and
+               * `:metric` against the registry, so an unknown pair is a friendly
+               * not-found card rather than a blank page.
+               */
+              { path: '/admin/analytics/engagement', element: <AnalyticsEngagementPage /> },
+              { path: '/admin/analytics/work', element: <AnalyticsWorkPage /> },
+              { path: '/admin/analytics/traffic', element: <AnalyticsTrafficPage /> },
+              { path: '/admin/analytics/growth', element: <AnalyticsGrowthPage /> },
+              { path: '/admin/analytics/:domain/:metric', element: <AnalyticsDetailPage /> },
             ],
           },
 

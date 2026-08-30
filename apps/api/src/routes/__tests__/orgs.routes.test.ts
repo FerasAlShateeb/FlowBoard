@@ -160,7 +160,12 @@ describe('POST /api/orgs', () => {
       .send({ name: 'Acme Two', slug: 'acme' });
 
     expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('conflict');
+    // `slug_taken`, not the generic `conflict` (W3.1). The web catalog renders
+    // `conflict` as "Someone else changed this first. Refresh and try again.",
+    // which is the optimistic-concurrency sentence and is useless advice for a
+    // slug that belongs to another organization. The code IS the copy, so the
+    // assertion is on the code.
+    expect(res.body.error.code).toBe('slug_taken');
   });
 
   it('422s a slug that is not URL-safe', async () => {

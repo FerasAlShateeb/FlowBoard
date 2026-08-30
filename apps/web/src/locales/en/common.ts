@@ -95,6 +95,7 @@ export default {
     projectSection: 'Project',
     workspaceSection: 'Workspace',
     adminSection: 'Administration',
+    analyticsSection: 'Analytics',
     home: 'Home',
     board: 'Board',
     backlog: 'Backlog',
@@ -115,17 +116,46 @@ export default {
     notifications: 'Notifications',
     profile: 'My profile',
     theme: 'Theme',
+    adminOverview: 'Overview',
+    adminOrgs: 'Organizations',
+    adminProjects: 'Projects',
     adminUsers: 'Users',
+    adminSettings: 'Instance settings',
+    analyticsEngagement: 'Engagement',
+    analyticsWork: 'Work',
+    analyticsTraffic: 'Traffic',
+    analyticsGrowth: 'Growth',
     adminTelemetry: 'Telemetry',
     adminTelemetryEvents: 'Telemetry events',
     adminTelemetryRequests: 'Request analytics',
     collapseSidebar: 'Collapse sidebar',
     expandSidebar: 'Expand sidebar',
     openMenu: 'Open navigation menu',
-    switchOrg: 'Switch organization',
-    noOrganization: 'No organization',
     userMenu: 'Account menu',
     breadcrumb: 'Breadcrumb',
+
+    /** The organization switcher — a combobox, not a menu. */
+    switchOrg: 'Switch organization',
+    noOrganization: 'No organization',
+    organizations: 'Organizations',
+    searchOrganizations: 'Search organizations…',
+    noOrganizationsFound: 'No organizations found',
+    allOrganizations: 'All organizations',
+    manageOrganizations: 'Manage organizations',
+    createOrganization: 'New organization',
+
+    /**
+     * "View as member" — an admin's preview of the product without their own
+     * console. The pill and the menu row are two ways into and out of the same
+     * state, so they share this block.
+     */
+    viewAsMember: 'View as member',
+    viewAsAdmin: 'Administrator view',
+    viewingAsMember: 'Viewing as member',
+    backToAdminView: 'Back to administrator view',
+    exitMemberView: 'Return to administrator view',
+    viewAsBlockedBody:
+      'Administration is hidden while you are previewing FlowBoard as a member. Return to administrator view to open this page.',
   },
 
   /** Appearance controls that live in the topbar. */
@@ -167,10 +197,30 @@ export default {
     },
   },
 
-  /** The placeholder every not-yet-built page renders (`common/PageStub`). */
-  stub: {
-    body: 'This view is arriving in a later wave.',
-    wave: 'Planned for {{wave}}',
+  /**
+   * The shared dashboard kit's own chrome (`components/dashboard/**`), resolved
+   * in one place by `dashboard/chrome-copy.ts`.
+   *
+   * Only the strings that had NO honest home elsewhere live here. The kit's
+   * table chrome legitimately reads the `table` namespace's already-generic
+   * `grid`/`config`/`footer`/`filters` blocks, and its verbs read
+   * `common:actions.*` — see the borrow table at the top of `chrome-copy.ts`.
+   * These five were the ones that could not: a density toggle on an admin grid
+   * is not a Theme Studio setting, and a window control shared by the reports
+   * dashboard and the admin console is not an `admin:` string.
+   */
+  grid: {
+    /** The rows-per-screen toggle: its accessible name and the two states. */
+    density: {
+      label: 'Density',
+      comfortable: 'Comfortable',
+      compact: 'Compact',
+    },
+    /** The range picker's group name and its custom-window trigger. */
+    range: {
+      label: 'Time range',
+      custom: 'Custom',
+    },
   },
 
   /**

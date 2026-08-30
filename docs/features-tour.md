@@ -27,9 +27,9 @@ every screen already has realistic data in it.
 12. [Working together: realtime and presence](#12-working-together-realtime-and-presence)
 13. [Notifications](#13-notifications)
 14. [Command palette and search](#14-command-palette-and-search)
-15. [Theme Studio](#15-theme-studio)
+15. [Theme Studio, the theme drawer, and motion](#15-theme-studio)
 16. [Arabic and right-to-left](#16-arabic-and-right-to-left)
-17. [Administration](#17-administration)
+17. [Administration and analytics](#17-administration)
 18. [The diagnostics drawer](#18-the-diagnostics-drawer)
 19. [Keyboard shortcuts](#19-keyboard-shortcuts)
 
@@ -64,14 +64,25 @@ Every signed-in screen sits inside the same frame.
   Theme) and, if you are a global administrator, the Admin section.
 - The sidebar **collapses to an icon rail**; each icon keeps its name as a
   tooltip. On a narrow screen it becomes a drawer instead.
-- The **topbar** carries the org switcher (you can belong to several
-  organizations), the command-palette trigger, the presence avatars for the
-  project you are looking at, a **light/dark toggle**, a **language switcher**
-  (English ↔ العربية), the notification bell, and your account menu.
+- The **topbar** carries **breadcrumbs** telling you where you are, the org
+  switcher (a searchable list — you can belong to several organizations), the
+  command-palette trigger, the presence avatars for the project you are looking
+  at, a **light/dark toggle**, a **language switcher** (English ↔ العربية), the
+  theme drawer's trigger, the notification bell, and your account menu.
+- The **FlowBoard mark is always a link home**, and the switcher's footer always
+  offers "All organizations" — so no page in the app is a dead end, including the
+  admin console, which has no organization in its URL at all.
 
 The topbar is an extension point rather than a fixed bar: features register
 themselves into a `start` / `center` / `end` slot, which is how the bell and the
 diagnostics toggle appear there without anything editing the topbar itself.
+
+If you are a **global administrator**, your account menu also offers **"View as
+member"**. It hides every admin surface — the admin sections in the sidebar, the
+admin rows in the command palette — so you can see the app the way an ordinary
+member does. An amber pill in the topbar reminds you that you are in that mode
+and returns you in one click. It changes only what you are shown; it never
+changes what the server would let you do.
 
 ## 3. Organizations, teams, and members
 
@@ -293,7 +304,23 @@ finds things.
 
 ## 15. Theme Studio
 
-`/theme`
+Two doors onto the same theme.
+
+**The drawer** — press **Ctrl+Shift+T** (⌘⇧T) anywhere, or click the palette
+icon in the topbar. A slim panel slides in from the side with three tabs —
+Colours, Typography, Layout — and everything you touch applies to the **real app
+behind it**, immediately. That is the point: you are not previewing a mock, you
+are watching the page you were already reading restyle itself. Save keeps it,
+Reset returns to the default, Export writes a JSON file, Import reads one back.
+The drawer is not modal — Escape closes it, and so does clicking outside.
+
+**The full editor at `/theme`** is for the other kind of question. It has the
+same presets plus a complete list of every individual colour token, a live
+preview column, and a warning if you try to leave with unsaved changes. The
+drawer links to it ("Advanced editor →") and it can reopen the drawer over
+itself.
+
+Between them:
 
 - **Eight colour presets** — Default, Graphite, Ocean, Forest, Sunset, Rose,
   Amber, and High Contrast — each shown as a card with a miniature preview of a
@@ -312,6 +339,16 @@ finds things.
 Your theme is applied before the app paints, so you never see a flash of the
 wrong palette on reload.
 
+**Motion is a separate setting**, on your profile page (`/me`). FlowBoard barely
+animates by design — interface transitions run at 130 milliseconds, below the
+threshold where you would call it an animation — and the handful of places that
+do move (a tooltip, a card settling after a drop, the bell badge, the drawer
+sliding in, a chart drawing itself the first time) each have a still version.
+Choose **Full**, **Reduced**, or **Follow my system**. The default is Full even
+if your operating system asks for reduced motion, because that switch is often
+flipped by something else entirely — a remote-desktop session, a power-saving
+mode — and FlowBoard would rather you decide here.
+
 ## 16. Arabic and right-to-left
 
 FlowBoard ships **English and Arabic**, and Arabic is a genuine right-to-left
@@ -328,24 +365,86 @@ Two deliberate choices are worth knowing about:
 
 ## 17. Administration
 
-Global-admin only.
+Global-admin only. Everything here sits **above** organizations, so it is the one
+part of FlowBoard where you are looking at the whole installation at once.
+
+You can always get back out: the FlowBoard mark at the top of the sidebar is a
+link home, the Home row stays in the sidebar on every admin page, and the
+organization switcher's footer offers "All organizations". Breadcrumbs across the
+top tell you where you are.
+
+### The console
+
+**`/admin/overview`** — five headline numbers (people, organizations, projects,
+tasks, and the last day's server-error rate) over two trend charts. **Every tile
+is a link** to the page where that number can be investigated. An optional
+switch refreshes it every 30 seconds.
 
 **`/admin/users`** — the people directory for the whole installation. Provision a
-new user, promote or demote a global admin, reset a password, force-log-out every
-session a user has, and deactivate or reactivate an account. Deactivating
-immediately invalidates every token that user holds, including any live realtime
-connection. You cannot lock yourself out: the actions that would apply to your
-own account are disabled.
+new user (FlowBoard generates a one-time password and shows it once), promote or
+demote a global admin, reset a password, force-log-out every session a user has,
+deactivate or reactivate an account, edit which organizations somebody belongs
+to, and export the list as CSV. Deactivating immediately invalidates every token
+that user holds, including any live realtime connection. You cannot lock yourself
+out: the actions that would apply to your own account are not offered.
 
-**`/admin/telemetry`** — FlowBoard's own analytics, computed from its own
-database, with no third-party service involved.
+**Deleting a person anonymizes them rather than erasing them.** The account's
+name, email and avatar are scrubbed, the sessions are revoked and every
+membership is removed — but the row survives, so their comments, their task
+history and the activity trail stay intact and readable. The confirmation asks
+you to type their email address, and it tells you how many memberships will go.
+
+**`/admin/orgs`** — create an organization, rename one, archive one, and
+**restore an archived one**. Archiving is reversible and the dialog says so;
+restoring is one click from the row. A toggle shows or hides archived rows.
+
+**`/admin/projects`** — every project in the installation, with its
+organization, its lead, its member and task counts, and when it was last active.
+Read-only: sort it, filter it, and click through to the project itself. Project
+settings still live on the project.
+
+**`/admin/settings`** — the instance's name, and the two settings that decide the
+shape of the app:
+
+- **Organization mode.** _Multiple_ is the default. _Single_ is for an
+  installation that will only ever host one team: the organization switcher
+  disappears, `/` goes straight to that organization, and every "pick an
+  organization" step is skipped. Nothing is deleted and nothing is migrated —
+  switch back and everything is where you left it.
+- **Default organization**, which single mode uses. If there is exactly one, it
+  is adopted for you.
+
+### The analytics console
+
+**`/admin/analytics`** — FlowBoard measuring itself, from its own database, with
+no third-party service involved. Four dashboards share one date range
+(7 days / 30 days / 90 days / 12 months, or a custom window):
+
+| Dashboard      | Answers                                                                            |
+| -------------- | ---------------------------------------------------------------------------------- |
+| **Engagement** | Who is showing up — daily actives, sign-ups, stickiness, activity by hour of day   |
+| **Work**       | What is getting done — tasks created and completed, cycle time, points, by project |
+| **Traffic**    | How the server is behaving — requests, errors, latency percentiles, top endpoints  |
+| **Growth**     | How the installation is spreading — new organizations, invites sent and accepted   |
+
+**Every number opens.** Click a headline tile, or "Details →" on a chart, and you
+land on the same breakdown page: the chart again, a table of the underlying rows,
+filters, and a CSV of everything the filters matched — not just the page you can
+see. Its date range is its own, so widening it to find the shape of a spike does
+not disturb the dashboard you came from.
+
+### Ops
+
+**`/admin/telemetry`** is the operational half, and it is a different question:
+not "how is the product doing" but "what exactly happened, and is the server
+healthy right now".
 
 - The **overview** shows traffic, latency percentiles, and the server-error rate.
-- **`/admin/telemetry/events`** lists product events (what people actually did).
+- **`/admin/telemetry/events`** is the raw feed of product events — filterable,
+  sortable, exportable, and it can be set to **All time**, which the analytics
+  ranges deliberately cannot.
 - **`/admin/telemetry/requests`** charts HTTP traffic over time, the busiest
-  endpoints, and latency distribution.
-
-Both pages take a time range and a bucket size.
+  endpoints, and the latency distribution, down to a 24-hour window.
 
 ## 18. The diagnostics drawer
 
@@ -371,14 +470,15 @@ is generated from the live shortcut registry, so it cannot go stale.
 
 ### Global
 
-| Keys                   | Does                          | Available                 |
-| ---------------------- | ----------------------------- | ------------------------- |
-| **Ctrl+K** / ⌘K        | Open the command palette      | Anywhere, signed in       |
-| **?**                  | Open this shortcuts sheet     | Signed in, no dialog open |
-| **C**                  | Create a task                 | Inside a project          |
-| **Ctrl+J** / ⌘J        | Toggle the diagnostics drawer | Global admins             |
-| **Ctrl+Shift+J** / ⌘⇧J | Cycle the drawer's dock edge  | Global admins             |
-| **Esc**                | Close whatever is on top      | Anywhere                  |
+| Keys                   | Does                           | Available                 |
+| ---------------------- | ------------------------------ | ------------------------- |
+| **Ctrl+K** / ⌘K        | Open the command palette       | Anywhere, signed in       |
+| **?**                  | Open this shortcuts sheet      | Signed in, no dialog open |
+| **C**                  | Create a task                  | Inside a project          |
+| **Ctrl+Shift+T** / ⌘⇧T | Toggle the Theme Studio drawer | Anywhere, signed in       |
+| **Ctrl+J** / ⌘J        | Toggle the diagnostics drawer  | Global admins             |
+| **Ctrl+Shift+J** / ⌘⇧J | Cycle the drawer's dock edge   | Global admins             |
+| **Esc**                | Close whatever is on top       | Anywhere                  |
 
 `Ctrl+K` and `Ctrl+J` work even while you are typing in a field. Single-letter
 shortcuts deliberately do not — a `c` must be able to reach the comment box.

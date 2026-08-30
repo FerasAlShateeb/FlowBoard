@@ -81,6 +81,7 @@ const EVENTS = [
     payload: { path: '/o/:orgSlug/p/:projectKey/board' },
     createdAt: '2026-08-27T11:59:00.000Z',
     userName: 'Ada Lovelace',
+    projectName: 'FlowBoard Web',
   },
 ];
 

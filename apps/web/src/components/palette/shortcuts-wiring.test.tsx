@@ -5,6 +5,7 @@ import { act, cleanup, render } from '@testing-library/react';
 
 import { clearShortcutsForTest, useShortcuts, type ShortcutDef } from '@/lib/shortcuts';
 import { usePaletteStore, __resetPaletteStoreForTests } from '@/stores/usePaletteStore';
+import { useLayoutStore } from '@/stores/useLayoutStore';
 import GlobalShortcuts from '@/components/palette/GlobalShortcuts';
 
 /**
@@ -86,7 +87,7 @@ afterEach(() => {
 });
 
 describe('the registry after mounting', () => {
-  it('registers exactly the three chords this package owns, with their groups', () => {
+  it('registers exactly the four chords this package owns, with their groups', () => {
     mount(IN_PROJECT);
 
     expect(
@@ -94,6 +95,10 @@ describe('the registry after mounting', () => {
     ).toEqual([
       { id: 'palette.open', chord: 'mod+k', group: 'navigation' },
       { id: 'palette.shortcuts', chord: 'shift+?', group: 'system' },
+      // W3.1: the Theme Studio drawer's chord. Registered HERE, through the
+      // registry, rather than as a bare listener — so the cheat sheet names it
+      // and `?` stays an honest inventory of what this session can do.
+      { id: 'theme.studio', chord: 'mod+shift+t', group: 'system' },
       { id: 'palette.createTask', chord: 'c', group: 'tasks' },
     ]);
   });
@@ -115,9 +120,106 @@ describe('the registry after mounting', () => {
 
   it('unregisters everything on unmount', () => {
     const { unmount } = mount(IN_PROJECT);
-    expect(readRegistry()).toHaveLength(3);
+    expect(readRegistry()).toHaveLength(4);
     unmount();
     expect(readRegistry()).toHaveLength(0);
+  });
+});
+
+describe('mod+shift+t — the Theme Studio drawer', () => {
+  beforeEach(() => {
+    useLayoutStore.getState().setThemeStudioOpen(false);
+  });
+
+  afterEach(() => {
+    useLayoutStore.getState().setThemeStudioOpen(false);
+  });
+
+  it('opens the drawer, and a second press closes it', () => {
+    mount(IN_PROJECT);
+
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(true);
+
+    // A toggle, not an opener: one keystroke a user did not mean must be
+    // undoable with the same keystroke, not only with Escape.
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+  });
+
+  it('fires from inside a text field — appearance is a mid-sentence decision', () => {
+    mount(IN_PROJECT);
+    press('t', { ctrlKey: true, shiftKey: true, fromInput: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(true);
+  });
+
+  it('needs BOTH modifiers — `mod+t` belongs to the browser', () => {
+    mount(IN_PROJECT);
+    press('t', { ctrlKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+  });
+
+  it('needs no org and no project — it is not workspace chrome', () => {
+    mount({ orgSlug: null, projectKey: null });
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(true);
+  });
+
+  it('does nothing signed out', () => {
+    mount(IN_PROJECT, false);
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+  });
+
+  /**
+   * THE OVERLAY GATE (R2 W3.5) — the same one `?` and `c` carry.
+   *
+   * The drawer is a hand-rolled `aria-modal` surface with its own focus cycle
+   * and its own `body` scroll lock. Opening it on top of a Radix dialog gives
+   * the page two focus traps fighting for one Tab and two `overflow` cleanups
+   * racing on one element. Both halves of `overlayIsOpen()` are asserted,
+   * because they are two independent sources: the palette's own store, and the
+   * DOM query that covers every other dialog and sheet in the app.
+   */
+  it('does NOT stack on top of the open palette', () => {
+    mount(IN_PROJECT);
+    act(() => {
+      usePaletteStore.getState().openPalette();
+    });
+
+    press('t', { ctrlKey: true, shiftKey: true });
+
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+  });
+
+  it('does NOT stack on top of a dialog or sheet from anywhere else in the app', () => {
+    mount(IN_PROJECT);
+    const sheet = document.createElement('div');
+    sheet.setAttribute('data-slot', 'sheet-content');
+    document.body.append(sheet);
+
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
+
+    // …and it works again the moment that surface is gone.
+    sheet.remove();
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(true);
+  });
+
+  /**
+   * The gate must not cost the drawer its own toggle. `overlayIsOpen()` queries
+   * the `data-slot`s `ui/dialog` and `ui/sheet` stamp, and this drawer is
+   * neither — it is a hand-rolled `<aside>` — so an open Theme Studio does not
+   * gate the chord that closes it.
+   */
+  it('still closes ITSELF — the gate does not see the drawer', () => {
+    mount(IN_PROJECT);
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(true);
+
+    press('t', { ctrlKey: true, shiftKey: true });
+    expect(useLayoutStore.getState().themeStudioOpen).toBe(false);
   });
 });
 

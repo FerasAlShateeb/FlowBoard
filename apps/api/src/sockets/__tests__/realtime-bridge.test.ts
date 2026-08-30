@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { eq } from 'drizzle-orm';
 
 import { closeDb, comments, db, notifications } from '../../db';
-import { publishDomainEvent } from '../../utils/domain-events';
+import { onDomainEvent, publishDomainEvent } from '../../utils/domain-events';
 import { ensureTestDb, truncateAllTables } from '../../test/test-db';
 import {
   seedSprint,
@@ -11,6 +11,8 @@ import {
   type World,
 } from '../../routes/__tests__/task-domain.fixtures';
 import { updateUser } from '../../services/admin-users.service';
+import { softDeleteOrg } from '../../services/orgs.service';
+import { presenceRoster, presenceSocketCount } from '../presence';
 import { registerRealtimeBridge, unregisterRealtimeBridge } from '../realtime-bridge';
 import {
   connectClient,
@@ -648,6 +650,114 @@ describe('user.revoked — dropping a revoked account’s live sockets', () => {
     await updateUser(world.admin.id, world.viewer.id, { forceLogout: true });
 
     await expect(closed).resolves.toBe('io server disconnect');
+  });
+});
+
+/**
+ * R2 W3.5 — ARCHIVING AN ORG REACHES THE ROOMS IT ALREADY HANDED OUT.
+ *
+ * The guards' half of the fix (`middlewares/require-roles.ts`,
+ * `sockets/socket-reads.ts`) refuses every FUTURE request and every future
+ * `project:join`. A socket already sitting in one of the org's project rooms
+ * asked its permission question once, at join time, so it went on receiving task
+ * and comment traffic for an organization that had just been switched off.
+ *
+ * The eviction is a room LEAVE, not a disconnect — the deliberate difference
+ * from `user.revoked` above. Archiving one tenancy is not revoking a person: the
+ * same tab may be watching a live board in another org, and it is certainly
+ * still entitled to its notifications. Every test here asserts BOTH halves —
+ * the traffic stops AND the connection survives.
+ */
+describe('org.archived — emptying an archived org’s project rooms', () => {
+  it('stops project traffic to sockets that had already joined, without disconnecting them', async () => {
+    const { observer } = await twoJoinedClients();
+    const taskId = await seedTask(world);
+
+    await softDeleteOrg(world.orgId);
+    // Nothing about the socket itself changed — only which rooms it is in.
+    expect(observer.connected).toBe(true);
+
+    publishDomainEvent('task.created', {
+      projectId: world.projectId,
+      actorId: world.admin.id,
+      originSocketId: null,
+      taskId,
+      statusId: world.statuses.todo,
+      assigneeIdAtCommit: null,
+      reporterIdAtCommit: null,
+    });
+
+    await expectNoEvent(observer, 'task:created');
+  });
+
+  it('empties the presence roster, so nobody is left "present" in an unreachable project', async () => {
+    await twoJoinedClients();
+    expect(presenceSocketCount(world.projectId)).toBe(2);
+
+    publishDomainEvent('org.archived', { orgId: world.orgId, projectIds: [world.projectId] });
+
+    expect(presenceSocketCount(world.projectId)).toBe(0);
+    expect(presenceRoster(world.projectId)).toEqual([]);
+  });
+
+  it('leaves a DIFFERENT org’s rooms alone', async () => {
+    const other = await seedWorld();
+    const bystander = await connectClient(gateway, other.member.token);
+    await joinProject(bystander, other.projectId);
+    const taskId = await seedTask(other);
+
+    await softDeleteOrg(world.orgId);
+
+    publishDomainEvent('task.created', {
+      projectId: other.projectId,
+      actorId: other.admin.id,
+      originSocketId: null,
+      taskId,
+      statusId: other.statuses.todo,
+      assigneeIdAtCommit: null,
+      reporterIdAtCommit: null,
+    });
+
+    await waitFor(bystander, 'task:created');
+    expect(presenceSocketCount(other.projectId)).toBe(1);
+  });
+
+  /**
+   * The service wiring, not just the handler: this is what proves
+   * `softDeleteOrg` publishes at all, and that it names the org's live projects.
+   */
+  it('is published by the real archive endpoint’s service, carrying the live project ids', async () => {
+    const captured: { orgId: string; projectIds: readonly string[] }[] = [];
+    const off = onDomainEvent('org.archived', (payload) => {
+      captured.push(payload);
+    });
+
+    try {
+      await softDeleteOrg(world.orgId);
+    } finally {
+      off();
+    }
+
+    expect(captured).toEqual([{ orgId: world.orgId, projectIds: [world.projectId] }]);
+  });
+
+  it('publishes nothing when the archive is refused', async () => {
+    const captured: unknown[] = [];
+    const off = onDomainEvent('org.archived', (payload) => {
+      captured.push(payload);
+    });
+
+    try {
+      // Already archived — `softDeleteOrg` 404s, and a refused archive must not
+      // evict anybody.
+      await softDeleteOrg(world.orgId);
+      captured.length = 0;
+      await expect(softDeleteOrg(world.orgId)).rejects.toThrow();
+    } finally {
+      off();
+    }
+
+    expect(captured).toEqual([]);
   });
 });
 

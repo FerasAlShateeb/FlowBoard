@@ -22,6 +22,7 @@ import {
   listOrgMembers,
   listOrgUsers,
   removeOrgMember,
+  restoreOrg,
   updateOrg,
   updateOrgMember,
 } from '../controllers/orgs.controller';
@@ -32,6 +33,7 @@ import { asyncHandler } from '../utils/async-handler';
 import {
   addOrgMemberBodySchema,
   createOrgBodySchema,
+  orgListQuerySchema,
   orgMemberParamsSchema,
   orgParamsSchema,
   updateMemberInputSchema,
@@ -46,7 +48,7 @@ export const orgsRouter: Router = Router();
 orgsRouter.use(requireAuth);
 
 // ── The org itself ──────────────────────────────────────────────────────────
-orgsRouter.get('/', asyncHandler(listMyOrgs));
+orgsRouter.get('/', validate(orgListQuerySchema, 'query'), asyncHandler(listMyOrgs));
 
 orgsRouter.post('/', requireGlobalAdmin, validate(createOrgBodySchema), asyncHandler(createOrg));
 
@@ -70,6 +72,20 @@ orgsRouter.delete(
   validate(orgParamsSchema, 'params'),
   requireGlobalAdmin,
   asyncHandler(deleteOrg),
+);
+
+/**
+ * Un-archive. `requireGlobalAdmin` and NOT `requireOrgRole('admin')`, which is
+ * not a copy-paste slip: the role guard resolves the org through the same
+ * `deleted_at IS NULL` filter every other read uses, so it would 404 the exact
+ * rows this route exists to act on. An organization's lifecycle is tenancy, not
+ * content — the same floor as create and delete.
+ */
+orgsRouter.post(
+  '/:orgId/restore',
+  validate(orgParamsSchema, 'params'),
+  requireGlobalAdmin,
+  asyncHandler(restoreOrg),
 );
 
 // ── Membership ──────────────────────────────────────────────────────────────

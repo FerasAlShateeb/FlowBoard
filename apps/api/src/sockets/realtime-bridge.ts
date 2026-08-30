@@ -1,6 +1,7 @@
 /**
- * THE REALTIME BRIDGE — domain events in, socket emits out (plus one forced
- * disconnect: `user.revoked`, at the bottom).
+ * THE REALTIME BRIDGE — domain events in, socket emits out (plus the two
+ * handlers at the bottom that move sockets instead of emitting on them:
+ * `user.revoked` closes connections, `org.archived` empties rooms).
  *
  * This is the one place where the two halves of the plan's decoupling meet.
  * Wave-2 services publish `task.moved` and are done: they never import
@@ -80,6 +81,7 @@ import { listStatuses, listTransitions } from '../services/workflow.service';
 import { onDomainEvent, type Unsubscribe } from '../utils/domain-events';
 import { logger } from '../utils/logger';
 import { tryGetIo } from './io';
+import { clearProjectPresence } from './presence';
 import { loadComment, loadNotificationPush } from './socket-reads';
 
 /**
@@ -371,6 +373,45 @@ export function registerRealtimeBridge(): void {
      */
     onDomainEvent('user.revoked', ({ userId }) => {
       tryGetIo()?.in(userRoom(userId)).disconnectSockets(true);
+    }),
+
+    /**
+     * The org archive's live half — the second handler that moves sockets
+     * rather than emitting on them, and deliberately the GENTLER of the two.
+     *
+     * `user.revoked` closes connections because the SESSION is gone: nothing the
+     * socket could still be told is legitimate. Archiving an organization
+     * revokes one tenancy, not a person — the same tab may be watching a board
+     * in another live org, and it is certainly still entitled to its
+     * notifications. So this empties the rooms (`socketsLeave`) and leaves the
+     * connections alone. Emptying a room is also idempotent and cheap: a room
+     * nobody is in is a no-op, which is the normal case.
+     *
+     * There is no `except()`, for the same reason `user.revoked` has none: the
+     * archive is an instance-admin action taken from `/admin/orgs`, and that
+     * admin is not in any of these project rooms.
+     *
+     * PRESENCE IS CLEANED UP TOO, not left to the disconnect handler. The
+     * roster is a `Map` keyed by project, not a projection of the Socket.IO
+     * rooms, so a `socketsLeave` alone would leave every evicted tab listed as
+     * "present" in a project nobody can open — for as long as those tabs stay
+     * connected, which for a browser left open is indefinitely. The broadcast
+     * that would normally follow a roster change is pointless here (the room is
+     * empty by the time it would go out), so it is skipped.
+     *
+     * `socketsLeave` returns void in the single-node case this deployment is
+     * (`InterServerEvents` is declared empty in the shared contract), so nothing
+     * is awaited; the handler stays synchronous like every other one here.
+     */
+    onDomainEvent('org.archived', ({ orgId, projectIds }) => {
+      const io = tryGetIo();
+      if (!io) return;
+      for (const projectId of projectIds) {
+        const room = projectRoom(projectId);
+        io.in(room).socketsLeave(room);
+        clearProjectPresence(projectId);
+      }
+      logger.debug({ orgId, projects: projectIds.length }, 'Org archived — project rooms emptied');
     }),
   ];
 

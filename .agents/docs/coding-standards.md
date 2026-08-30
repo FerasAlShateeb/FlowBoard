@@ -301,6 +301,22 @@ act, not a typo fix. The reason it is English on the wire — and not a message
 key the client resolves — is covered in [i18n.md](./i18n.md); do not re-derive it
 here.
 
+### 3.6 Shared chrome reads the catalog in one module
+
+A component family that is **shared chrome** — rendered by several surfaces and
+owned by none — must not call `t()` from its parts. The shipped example is
+`apps/web/src/components/dashboard/chrome-copy.ts`: two hooks return every
+string the generic `DataTable` and `RangePicker` render, and no other file in
+`components/dashboard/**` touches i18next. The returned shapes are the contract;
+the keys behind them can move without editing a component.
+
+Because the family has no namespace of its own, every string is **borrowed** —
+and the module carries a **borrow table, split into KEPT and MINTED**, with a
+reason per row. **Add a row when you add a borrow**, and mint into `common:grid.*`
+rather than borrow when the source key names a different thing that merely reads
+the same today. Full treatment in
+[design-system.md](./design-system.md) §10.6.
+
 ## 4. CommonJS conventions in `apps/api`
 
 `apps/api/package.json` declares `"type": "commonjs"` and
@@ -574,19 +590,21 @@ Every persisted browser key is `fb-<name>-v1`, is exported as a named constant
 from its owner module, and is listed here. **Add a row when you add a key.**
 Bump the suffix only for a shape change a `migrate` cannot absorb.
 
-| Key                      | Storage            | Owner                                                 | Exported constant          | Holds                                                                                                                                                 |
-| ------------------------ | ------------------ | ----------------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fb-auth-v1`             | localStorage       | `apps/web/src/stores/useAuthStore.ts`                 | `AUTH_STORAGE_KEY`         | `{ accessToken, refreshToken, user }` — byte-for-byte what `POST /auth/login` returned.                                                               |
-| `fb-theme-v1`            | localStorage       | `apps/web/src/components/theme/theme-storage.ts`      | `THEME_STORAGE_KEY`        | The Theme Studio `ThemeDocument`. Every read is zod-validated.                                                                                        |
-| `fb-dark-v1`             | localStorage       | `apps/web/src/components/theme/theme-storage.ts`      | `DARK_STORAGE_KEY`         | `'1'`/`'0'` dark-mode preference — separate from the document, so switching preset does not reset the mode.                                           |
-| `fb-lang-v1`             | localStorage       | `apps/web/src/lib/lang-policy.ts`                     | `LANG_STORAGE_KEY`         | The `en`/`ar` preference, read before first paint to stamp `<html lang\|dir>`.                                                                        |
-| `fb-layout-v1`           | localStorage       | `apps/web/src/stores/useLayoutStore.ts`               | `LAYOUT_STORAGE_KEY`       | `sidebarCollapsed`, `diagDock`, `diagHeight`, `diagWidth`. Versioned — see below.                                                                     |
-| `fb-board-filters-v1`    | localStorage       | `apps/web/src/stores/useBoardFilterStore.ts`          | `BOARD_FILTER_STORAGE_KEY` | `byProject` → assignees, types, priorities, labels, committed query, swimlane mode.                                                                   |
-| `fb-table-columns-v1`    | localStorage       | `apps/web/src/components/datatable/table-prefs.ts`    | `COLUMN_PREFS_KEY`         | `Record<projectId, { order, hidden }>` for the Table view.                                                                                            |
-| `fb-table-filters-v1`    | localStorage       | `apps/web/src/components/datatable/table-prefs.ts`    | `FILTER_PREFS_KEY`         | `Record<projectId, TableFilterState>` — the Table's own lens, distinct from the board's.                                                              |
-| `fb-backlog-collapse-v1` | localStorage       | `apps/web/src/components/backlog/backlog-collapse.ts` | `BACKLOG_COLLAPSE_KEY`     | Section id → collapsed. A **map**, not a set: sections have different defaults, so "folded by the user" must be distinguishable from "never touched". |
-| `fb-last-org-v1`         | localStorage       | `apps/web/src/hooks/useLastOrg.ts`                    | `LAST_ORG_STORAGE_KEY`     | The last org **slug** (not id — the URL takes a slug, and a stale one degrades to the picker).                                                        |
-| `fb-chunk-reload-v1`     | **session**Storage | `apps/web/src/lib/chunk-recovery.ts`                  | `CHUNK_RELOAD_KEY`         | Epoch-ms of the last `vite:preloadError` recovery reload. sessionStorage because the reload wipes the heap and the guard must be per-tab.             |
+| Key                      | Storage            | Owner                                                 | Exported constant          | Holds                                                                                                                                                                                              |
+| ------------------------ | ------------------ | ----------------------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fb-auth-v1`             | localStorage       | `apps/web/src/stores/useAuthStore.ts`                 | `AUTH_STORAGE_KEY`         | `{ accessToken, refreshToken, user }` — byte-for-byte what `POST /auth/login` returned.                                                                                                            |
+| `fb-theme-v1`            | localStorage       | `apps/web/src/components/theme/theme-storage.ts`      | `THEME_STORAGE_KEY`        | The Theme Studio `ThemeDocument`. Every read is zod-validated.                                                                                                                                     |
+| `fb-dark-v1`             | localStorage       | `apps/web/src/components/theme/theme-storage.ts`      | `DARK_STORAGE_KEY`         | `'1'`/`'0'` dark-mode preference — separate from the document, so switching preset does not reset the mode.                                                                                        |
+| `fb-lang-v1`             | localStorage       | `apps/web/src/lib/lang-policy.ts`                     | `LANG_STORAGE_KEY`         | The `en`/`ar` preference, read before first paint to stamp `<html lang\|dir>`.                                                                                                                     |
+| `fb-layout-v1`           | localStorage       | `apps/web/src/stores/useLayoutStore.ts`               | `LAYOUT_STORAGE_KEY`       | `sidebarCollapsed`, `diagDock`, `diagHeight`, `diagWidth`. Versioned — see below.                                                                                                                  |
+| `fb-board-filters-v1`    | localStorage       | `apps/web/src/stores/useBoardFilterStore.ts`          | `BOARD_FILTER_STORAGE_KEY` | `byProject` → assignees, types, priorities, labels, committed query, swimlane mode.                                                                                                                |
+| `fb-table-columns-v1`    | localStorage       | `apps/web/src/components/datatable/table-prefs.ts`    | `COLUMN_PREFS_KEY`         | `Record<projectId, { order, hidden }>` for the Table view.                                                                                                                                         |
+| `fb-table-filters-v1`    | localStorage       | `apps/web/src/components/datatable/table-prefs.ts`    | `FILTER_PREFS_KEY`         | `Record<projectId, TableFilterState>` — the Table's own lens, distinct from the board's.                                                                                                           |
+| `fb-backlog-collapse-v1` | localStorage       | `apps/web/src/components/backlog/backlog-collapse.ts` | `BACKLOG_COLLAPSE_KEY`     | Section id → collapsed. A **map**, not a set: sections have different defaults, so "folded by the user" must be distinguishable from "never touched".                                              |
+| `fb-last-org-v1`         | localStorage       | `apps/web/src/hooks/useLastOrg.ts`                    | `LAST_ORG_STORAGE_KEY`     | The last org **slug** (not id — the URL takes a slug, and a stale one degrades to the picker).                                                                                                     |
+| `fb-chunk-reload-v1`     | **session**Storage | `apps/web/src/lib/chunk-recovery.ts`                  | `CHUNK_RELOAD_KEY`         | Epoch-ms of the last `vite:preloadError` recovery reload. sessionStorage because the reload wipes the heap and the guard must be per-tab.                                                          |
+| `fb-motion-v1`           | localStorage       | `apps/web/src/lib/motion-policy.ts`                   | `MOTION_STORAGE_KEY`       | `'full'` / `'reduced'` / `'system'`. Read pre-paint to stamp `<html data-motion>`; **anything unrecognised falls back to `full`** — see [motion.md](./motion.md) §2.                               |
+| `fb-view-mode-v1`        | localStorage       | `apps/web/src/components/navigation/view-as.ts`       | `VIEW_MODE_STORAGE_KEY`    | `'1'`/`'0'` — a global admin's "view as member" posture. Its own key rather than a field inside `fb-auth-v1`, because it is a way of looking, not part of the session; `clearSession()` resets it. |
 
 Three rules the owners all follow, and yours must too:
 
@@ -659,7 +677,9 @@ and are not repeated here.
 - [architecture.md](./architecture.md) — layering, the envelope, the domain-event bus, the frontend state split.
 - [database.md](./database.md) — schema conventions, indexes, migrations, the seed.
 - [testing.md](./testing.md) — the test pyramid and what each layer owns.
-- [i18n.md](./i18n.md) — why validation copy is English on the wire, and the RTL rules.
-- [design-system.md](./design-system.md) — tokens, hand-copying shadcn primitives.
+- [i18n.md](./i18n.md) — why validation copy is English on the wire, the RTL rules, and the typed-literal key config modules.
+- [design-system.md](./design-system.md) — tokens, hand-copying shadcn primitives, the dashboard kit, the borrow table.
+- [motion.md](./motion.md) — `fb-motion-v1`, the `data-motion` gate, and the closed motion registry.
+- [admin.md](./admin.md) — `fb-view-mode-v1`, and the instance-admin surfaces above the org boundary.
 
 Back to [docs/INDEX.md](./INDEX.md) · [.agents/INDEX.md](../INDEX.md)

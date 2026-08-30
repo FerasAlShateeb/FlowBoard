@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 
-import { closeDb, db, users } from '../../db';
+import { closeDb, db, organizations, users } from '../../db';
 import { signAccessToken } from '../../utils/jwt';
 import { ensureTestDb, truncateAllTables } from '../../test/test-db';
 import {
@@ -175,6 +175,52 @@ describe('project:join', () => {
     const client = await connectClient(gateway, user.token);
 
     const ack = await joinProject(client, '00000000-0000-4000-8000-0000000000aa');
+
+    expect(ack.ok).toBe(false);
+    expect(ack.code).toBe('NOT_FOUND');
+  });
+
+  /**
+   * ORG ARCHIVE REVOKES THE ROOM TOO (R2 W3.5).
+   *
+   * `handleJoin` calls `loadProjectRef` BEFORE `resolveProjectRole`, so the org
+   * check lands on the ref lookup and the refusal is `NOT_FOUND` rather than
+   * `FORBIDDEN` — the same answer, from the same layer, as the HTTP guards give
+   * (see `routes/__tests__/org-liveness.routes.test.ts`). Asserting the code and
+   * not just `ok:false` is what proves it is the REF check refusing and not the
+   * role check, which would leave a global admin a way in.
+   */
+  it('refuses a member of an ARCHIVED org with NOT_FOUND, and lets them back in after a restore', async () => {
+    const org = await createOrg();
+    const project = await createProject(org.id);
+    const member = await createUser();
+    await addOrgMember(org.id, member.id);
+    await addProjectMember(project.id, member.id, 'member');
+
+    const client = await connectClient(gateway, member.token);
+    await expect(joinProject(client, project.id)).resolves.toEqual({ ok: true });
+
+    await db
+      .update(organizations)
+      .set({ deletedAt: new Date() })
+      .where(eq(organizations.id, org.id));
+
+    const refused = await joinProject(client, project.id);
+    expect(refused.ok).toBe(false);
+    expect(refused.code).toBe('NOT_FOUND');
+
+    await db.update(organizations).set({ deletedAt: null }).where(eq(organizations.id, org.id));
+
+    await expect(joinProject(client, project.id)).resolves.toEqual({ ok: true });
+  });
+
+  it('refuses a GLOBAL ADMIN into an archived org — the ref check runs first', async () => {
+    const org = await createOrg({ deleted: true });
+    const project = await createProject(org.id);
+    const admin = await createUser({ isGlobalAdmin: true });
+
+    const client = await connectClient(gateway, admin.token);
+    const ack = await joinProject(client, project.id);
 
     expect(ack.ok).toBe(false);
     expect(ack.code).toBe('NOT_FOUND');

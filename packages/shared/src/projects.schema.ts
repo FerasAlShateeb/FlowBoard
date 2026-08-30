@@ -9,7 +9,15 @@
 //
 // Runtime-neutral: zod only, no DOM/Node globals.
 import { z } from 'zod';
-import { hexColor, isoDateTime, uuid } from './common';
+import {
+  booleanQuery,
+  hexColor,
+  isoDateTime,
+  paginationQuerySchema,
+  slugSchema,
+  sortQueryFor,
+  uuid,
+} from './common';
 import { nameSchema, userSummarySchema } from './users.schema';
 import { statusSchema } from './workflow.schema';
 import { VM_KEY_FORMAT, VM_TOO_LONG, VM_UPDATE_AT_LEAST_ONE_FIELD } from './validation-messages';
@@ -138,6 +146,92 @@ export const updateProjectInputSchema = z
   .partial()
   .refine((value) => Object.keys(value).length > 0, { message: VM_UPDATE_AT_LEAST_ONE_FIELD });
 export type UpdateProjectInput = z.infer<typeof updateProjectInputSchema>;
+
+/**
+ * A row of `GET /api/admin/projects` — the CROSS-ORGANIZATION project list a
+ * global admin reads, one row per project in the whole deployment.
+ *
+ * ── WHY IT IS NOT {@link projectSchema} ─────────────────────────────────────
+ * Every other project payload answers "what is this project?" for somebody
+ * inside it. This one answers "what is going on across the platform?" for
+ * somebody outside all of them, and the two shapes disagree on almost every
+ * field:
+ *
+ *  - There is NO `role`. A global admin administers projects they are not a
+ *    member of; synthesising `'admin'` would make the client's permission checks
+ *    agree with a fiction (the same reasoning as `orgAdminRowSchema`).
+ *  - The ORGANIZATION is denormalized onto the row (`orgName`, `orgSlug`). The
+ *    table's first job is to say which tenant a project belongs to, and it
+ *    groups and links by it; joining against `GET /orgs` client-side would make
+ *    the page depend on a second query and render raw UUIDs until it lands.
+ *  - The LEAD is a NAME, not a `userSummary`. This table shows a text column,
+ *    never an avatar, and shipping the full summary for every row on every page
+ *    is bytes nothing renders.
+ *  - The COUNTS and `lastActivityAt` are the point of the row. "Which projects
+ *    are actually alive?" is unanswerable from a project list that does not
+ *    carry them, and computing them per row client-side is N+1 by another name.
+ *
+ * `projectId` rather than a bare `id` because the row already carries `orgId`:
+ * two id fields on one object, one of them called `id`, is exactly where a
+ * `row.id` in a link ends up pointing at the wrong entity.
+ *
+ * `deletedAt` is non-null for an ARCHIVED project, which the list only returns
+ * under `includeArchived` — see {@link adminProjectsListQuerySchema}.
+ */
+export const adminProjectRowSchema = z.object({
+  projectId: uuid,
+  key: projectKeySchema,
+  name: nameSchema,
+  orgId: uuid,
+  orgName: nameSchema,
+  orgSlug: slugSchema,
+  /** Display name of the project lead, or `null` when the project has none. */
+  leadName: nameSchema.nullable(),
+  memberCount: z.number().int().nonnegative(),
+  /** Live (non-archived) tasks. */
+  taskCount: z.number().int().nonnegative(),
+  /** Live tasks whose status is not in the `done` category. */
+  openTaskCount: z.number().int().nonnegative(),
+  /**
+   * The newest `activity` row for the project, or `null` for one where nothing
+   * has ever happened. Nullable is the whole reason the table sorts it
+   * NULLS LAST: a brand-new project is not the most recently active one.
+   */
+  lastActivityAt: isoDateTime.nullable(),
+  deletedAt: isoDateTime.nullable(),
+});
+export type AdminProjectRow = z.infer<typeof adminProjectRowSchema>;
+
+/**
+ * The sortable columns of the admin projects table.
+ *
+ * A closed list rather than an open `?sort=` string: the parsed field is handed
+ * to a query builder, so anything outside this set has to be rejected at the
+ * boundary rather than reaching SQL. `org` sorts by organization NAME (what the
+ * column renders), not by `orgId` — sorting a table of names by an opaque uuid
+ * looks random to the person reading it.
+ */
+export const adminProjectSortFields = ['name', 'org', 'taskCount', 'lastActivityAt'] as const;
+
+/**
+ * `GET /api/admin/projects?q&orgId&includeArchived&page&pageSize&sort`.
+ *
+ * `q` matches the project name OR its key — an admin looking for a project types
+ * either, and `FLOW` is often faster to type than "FlowBoard Web".
+ *
+ * `includeArchived` widens the list to soft-deleted projects AND to the projects
+ * of soft-deleted organizations. The two are one switch on purpose: archiving an
+ * organization archives everything under it as far as a reader is concerned, so
+ * a list that hid the org but kept showing its projects would be describing a
+ * state the product does not have.
+ */
+export const adminProjectsListQuerySchema = paginationQuerySchema.extend({
+  q: z.string().trim().max(120).optional(),
+  orgId: uuid.optional(),
+  includeArchived: booleanQuery.optional(),
+  sort: sortQueryFor(adminProjectSortFields).optional(),
+});
+export type AdminProjectsListQuery = z.infer<typeof adminProjectsListQuerySchema>;
 
 /** A row of `GET /projects/:projectId/members`. */
 export const projectMemberSchema = z.object({

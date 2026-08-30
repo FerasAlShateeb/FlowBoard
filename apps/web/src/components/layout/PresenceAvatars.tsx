@@ -4,7 +4,7 @@ import type { PresenceEntry, Task } from '@flowboard/shared';
 import { qk } from '@/lib/query-keys';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { AvatarBadge, AvatarGroup, AvatarGroupCount } from '@/components/ui/avatar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { AnimatedTooltip } from '@/components/ui/animated-tooltip';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useOthersPresent } from '@/stores/usePresenceStore';
 
@@ -37,10 +37,38 @@ import { useOthersPresent } from '@/stores/usePresenceStore';
  * reading something" without a word. If a future pass wants "Ada is viewing
  * FLOW-12" as a sentence, that is one `realtime` namespace away — see the
  * report's gap list.
+ *
+ * ═══ WHY THE TOOLTIP HERE IS THE ANIMATED ONE ══════════════════════════════
+ *
+ * This row is the canonical host for `ui/animated-tooltip` (motion registry
+ * entry #1): an overlapping stack of faces is the one place in FlowBoard where
+ * the cursor slides ALONG a set of triggers rather than landing on one, and the
+ * pointer-x parallax is what makes the label feel attached to the face under the
+ * cursor instead of re-appearing in a new place each time. Under Reduced motion
+ * the component falls back to the plain `ui/tooltip` primitive with the same
+ * copy — which is precisely what this file rendered before.
+ *
+ * The label is a STRING, not the two-part node it used to be, because that is
+ * `AnimatedTooltip`'s contract in both branches — a floating label that is
+ * mid-spring cannot also be a `<ul>`. No information is lost: the same name and
+ * the same task key, joined by a separator. Bidi handles the mixed run without
+ * help — a Latin `FLOW-12` inside an Arabic tooltip is an LTR run by the
+ * Unicode algorithm, which is exactly what the old explicit `dir="ltr"` span was
+ * asking for.
  */
 
 /** How many faces fit before the row collapses into a count. */
 const MAX_VISIBLE = 5;
+
+/**
+ * The separator between a name and the task key, and between overflow names.
+ *
+ * A middle dot rather than a comma: it is punctuation-neutral across the two
+ * shipped locales (Arabic's comma is `،`, and getting that right would mean a
+ * translated string, which this component is built to avoid — see the copy note
+ * above), and it reads as a delimiter rather than as part of either side.
+ */
+const SEPARATOR = ' · ';
 
 export interface PresenceAvatarsProps {
   projectId: string | null | undefined;
@@ -70,25 +98,21 @@ export function PresenceAvatars({ projectId }: PresenceAvatarsProps) {
       ))}
 
       {overflow > 0 ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <AvatarGroupCount aria-hidden>
-              {/*
-                A bare `+n`. Western digits regardless of locale, which is the
-                project's stated numeral policy — and `dir="ltr"` so the sign
-                stays on the left of the digit inside an RTL topbar.
-              */}
-              <span dir="ltr">+{overflow}</span>
-            </AvatarGroupCount>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <ul className="space-y-0.5">
-              {others.slice(MAX_VISIBLE).map((entry) => (
-                <li key={entry.user.id}>{entry.user.name}</li>
-              ))}
-            </ul>
-          </TooltipContent>
-        </Tooltip>
+        <AnimatedTooltip
+          label={others
+            .slice(MAX_VISIBLE)
+            .map((entry) => entry.user.name)
+            .join(SEPARATOR)}
+        >
+          <AvatarGroupCount aria-hidden>
+            {/*
+              A bare `+n`. Western digits regardless of locale, which is the
+              project's stated numeral policy — and `dir="ltr"` so the sign
+              stays on the left of the digit inside an RTL topbar.
+            */}
+            <span dir="ltr">+{overflow}</span>
+          </AvatarGroupCount>
+        </AnimatedTooltip>
       ) : null}
     </AvatarGroup>
   );
@@ -97,29 +121,20 @@ export function PresenceAvatars({ projectId }: PresenceAvatarsProps) {
 /** One person: their avatar, a dot when they are inside a task, their name. */
 function PresenceFace({ entry, taskKey }: { entry: PresenceEntry; taskKey: string | null }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="relative inline-flex">
-          <UserAvatar user={entry.user} size="sm" label="" />
-          {entry.taskId === null ? null : (
-            // The presence dot: "reading something specific", said without a
-            // word. `AvatarBadge` pins it to the reading-END corner in both
-            // directions, and its ring is what keeps it legible against the
-            // overlap of the next avatar.
-            <AvatarBadge className="bg-success" aria-hidden />
-          )}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        <span className="font-medium">{entry.user.name}</span>
-        {taskKey === null ? null : (
-          // A task key is a Latin identifier (`FLOW-12`) even on an Arabic page.
-          <span className="ms-1.5 text-muted-foreground" dir="ltr">
-            {taskKey}
-          </span>
+    <AnimatedTooltip
+      label={taskKey === null ? entry.user.name : `${entry.user.name}${SEPARATOR}${taskKey}`}
+    >
+      <span className="relative inline-flex">
+        <UserAvatar user={entry.user} size="sm" label="" />
+        {entry.taskId === null ? null : (
+          // The presence dot: "reading something specific", said without a
+          // word. `AvatarBadge` pins it to the reading-END corner in both
+          // directions, and its ring is what keeps it legible against the
+          // overlap of the next avatar.
+          <AvatarBadge className="bg-success" aria-hidden />
         )}
-      </TooltipContent>
-    </Tooltip>
+      </span>
+    </AnimatedTooltip>
   );
 }
 

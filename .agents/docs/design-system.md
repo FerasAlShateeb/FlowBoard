@@ -6,6 +6,12 @@ short list of files allowed to write a colour value at all. Read it before any
 styling work, before touching `apps/web/src/components/ui/`, and before adding a
 chart. §7 is the enforcement contract a reviewer checks a diff against.
 
+Two later sections are the Round-2 additions: **§10, the dashboard primitive
+kit** every admin and analytics page is assembled from (including the
+`PanelCard`-vs-`ReportCard` rule and the three range vocabularies), and **§11,
+the Theme Studio drawer**. Motion has its own doctrine doc,
+[motion.md](./motion.md).
+
 ## 1. The design direction
 
 FlowBoard is **Linear-style minimal, dark-first**. Both palettes are complete,
@@ -65,6 +71,18 @@ The file is five blocks and the order is load-bearing:
 
 Then `@layer base` (typography, focus ring, Arabic overrides, scrollbars) and
 `@layer components` (`.fb-card`, `.fb-auth-bg`, `.fb-grid-overlay`).
+
+**The file ends with one block that is deliberately outside every layer: the
+motion gate.** Tailwind v4 emits `theme`, `base`, `components` and `utilities`
+inside `@layer`, and an unlayered rule beats every layered one regardless of
+specificity — which is exactly what lets
+`:where(html[data-motion='reduced']) .animate-pulse` win over a utility with no
+`!important`. Every gate is wrapped in `:where()` so it contributes **zero**
+specificity, and `--speed` is not touched there at all (it is an inline custom
+property `applyTheme()` writes, which no stylesheet can reach). **It must stay
+last, and nothing may be appended after it** — a later unlayered rule would take
+the same precedence and could silently re-enable what the gate kills. The whole
+mechanic is [motion.md](./motion.md) §3.
 
 The stylesheet values are the **byte-for-byte twins** of `DEFAULT_THEME` in
 `apps/web/src/components/theme/theme-tokens.ts`. Change one without the other and
@@ -310,6 +328,11 @@ regardless of their OS.
 Route `/theme`, `apps/web/src/pages/ThemePage.tsx`. Three tabs (`colors`,
 `typography`, `layout`) plus a persistent `ThemePreview` column that is styled
 with ordinary tokens and therefore cannot drift from the real app.
+
+Since Round 2 this page is the **advanced editor**, not the only door: the same
+document is edited from a slide-over drawer opened with `mod+shift+t` from any
+screen. §11 covers the drawer, the split between the two, and why only this page
+carries a dirty guard.
 
 ### 4.1 `applyTheme()`
 
@@ -655,12 +678,27 @@ Two related patterns are **not** violations, and both say so in their own header
 
 ## 8. shadcn primitives — `apps/web/src/components/ui/`
 
-### 8.1 Inventory (26 files)
+### 8.1 Inventory (33 files)
 
-`avatar` · `badge` · `button` · `calendar` · `card` · `checkbox` · `command` ·
-`dialog` · `drawer` · `dropdown-menu` · `form` · `input` · `label` · `popover` ·
-`radio-group` · `scroll-area` · `select` · `separator` · `sheet` · `skeleton` ·
-`sonner` · `switch` · `table` · `tabs` · `textarea` · `tooltip`
+`alert` · `alert-dialog` · `animated-tooltip` · `avatar` · `badge` ·
+`breadcrumb` · `button` · `calendar` · `card` · `checkbox` · `collapsible` ·
+`command` · `dialog` · `drawer` · `dropdown-menu` · `form` · `input` · `label` ·
+`popover` · `progress` · `radio-group` · `scroll-area` · `select` · `separator` ·
+`sheet` · `skeleton` · `sonner` · `switch` · `table` · `tabs` · `textarea` ·
+`toggle-group` · `tooltip`
+
+Round 2 added seven, all hand-copied. Five are ordinary ports; two carry a
+decision worth knowing:
+
+| Primitive          | Note                                                                                                                                                                                                                                                                         |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `breadcrumb`       | The only file in the folder wrapping **no Radix package** — plain `<nav>` + ordered list + `aria-current`. Its separator chevron is `rtl:rotate-180` (a glyph, not a layout).                                                                                                |
+| `toggle-group`     | Hosts the `toggleVariants` CVA recipe; there is no standalone `toggle.tsx`. Segment geometry is logical (`rounded-s-*`/`rounded-e-*`, `border-s`), and the group requires a caller `aria-label`.                                                                             |
+| `collapsible`      | Radix owns `aria-expanded`/`aria-controls`/`data-state`; `overflow-hidden` on the content is load-bearing for the closing animation.                                                                                                                                         |
+| `alert`            | **`role` is a prop, defaulting to `note`** — upstream hard-codes `role="alert"`, and not every alert is a live-region announcement. Variant fills use the 12% `color-mix(in oklab, …)` tint recipe.                                                                          |
+| `alert-dialog`     | For **destructive, irreversible** confirmations only. `role="alertdialog"`, a required Description, focus landing on **Cancel** (never the destructive action), and no outside-click or X dismissal — Escape still works.                                                    |
+| `progress`         | The indicator is sized with **`inline-size`, not a `translateX` transform**: transforms are not mirrored by `direction`, so an RTL bar would empty from the wrong end. The value is clamped and NaN-guarded before it reaches Radix; `null` passes through as indeterminate. |
+| `animated-tooltip` | The one primitive built on the `motion` library, and a **registered exception** — see [motion.md](./motion.md) §4. Its reduced-motion branch is the plain `tooltip` primitive, same copy, same testid.                                                                       |
 
 ### 8.2 The rules
 
@@ -727,5 +765,322 @@ The sanctioned exception is the **LTR island** — Recharts plots
 (`components/reports/ChartFrame.tsx`) and the Gantt time axis, which compute pixel
 positions from a left origin and cannot mirror. Everything _around_ the plot flips
 normally; only the coordinate space stays LTR.
+
+## 10. The dashboard primitive kit — `apps/web/src/components/dashboard/`
+
+Round 2 added a second family beside `components/ui/*`: the pieces every
+admin/analytics page is assembled from. **They are compositions, not
+primitives** — they use the frozen `ui/*` set and are themselves editable, but
+they are the house shape for a console page and a new one-off card is a finding.
+
+### 10.1 Inventory
+
+| Export                                          | File                                | Answers                                                                                                                        |
+| ----------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `StatTile`                                      | `StatTile.tsx`                      | The headline-number card: label, value, optional trend badge, caption — and, when it drills, a link around the **whole** card. |
+| `StatDelta`                                     | `StatDelta.tsx`                     | The trend badge: a signed percent with a direction arrow. An **LTR island** (§10.8).                                           |
+| `PanelCard`                                     | `PanelCard.tsx`                     | The panel every dashboard section renders inside, and the reason one failing endpoint cannot blank a page.                     |
+| `SectionHeader`                                 | `SectionHeader.tsx`                 | A page header — title/subtitle at the reading start, actions at the end. It emits the page's `<h1>`.                           |
+| `RangePicker` / `RangePills`                    | `RangePicker.tsx`, `RangePills.tsx` | The console's window control: four preset pills plus a "Custom…" calendar popover.                                             |
+| `DataTable`, `col`, `compareValues`             | `DataTable.tsx`                     | The generic grid (§10.4).                                                                                                      |
+| `FacetFilter`, `ColumnsMenu`, `DraggableHeader` | `table/*.tsx`                       | The grid's chrome: facets, the columns menu, the reorderable header.                                                           |
+| `range.ts`                                      | `range.ts`                          | The window **vocabulary** — presets, `windowFor`, `intervalForSpan`, `rangeLabel` (§10.3).                                     |
+| `format.ts`                                     | `format.ts`                         | The kit's number and tick formatters over `lib/format.ts`, with `NO_VALUE = '—'`.                                              |
+| `series-delta.ts`                               | `series-delta.ts`                   | `seriesDelta(points)` — the last-two-buckets percent change behind every `StatDelta`.                                          |
+| `save-blob.ts`                                  | `save-blob.ts`                      | `saveBlob` / `downloadCsvBlob` — handing the browser a file the app generated in memory.                                       |
+| `chrome-copy.ts`                                | `chrome-copy.ts`                    | **The one place the kit reads the catalog** (§10.6).                                                                           |
+| `use-debounced.ts`                              | `use-debounced.ts`                  | Runs `fn(value)` once `value` has been stable for `delay` ms; the mount pass is skipped.                                       |
+
+Every file header states which question it answers, in one sentence. **Keep
+that convention** — this kit is a set of near-neighbours (three cards, two range
+modules, two table families) and the header is what stops the next reader
+picking the wrong one.
+
+### 10.2 `PanelCard` vs `ReportCard` — the split rule
+
+Two cards, and choosing wrongly is the most likely mistake in this area.
+
+|              | `components/reports/ReportCard.tsx`       | `components/dashboard/PanelCard.tsx`                                                                  |
+| ------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Body         | **Pinned `aspect-[16/10] min-h-[200px]`** | Height comes from the **content**; `bodyClassName` is the caller's                                    |
+| Skeleton     | One fixed chart-shaped placeholder        | A discriminated `PanelSkeleton`: `{kind:'kpi'}` · `{kind:'chart', height?}` · `{kind:'table', rows?}` |
+| `info`       | required                                  | optional                                                                                              |
+| `testId`     | —                                         | present                                                                                               |
+| State ladder | error → loading → empty → chart           | error → pending → empty → content                                                                     |
+
+**Use `ReportCard` for a grid of same-shaped chart tiles; use `PanelCard` for a
+page of differently-shaped panels.** The reports dashboard is six charts whose
+queries land one by one, and a fixed aspect is what stops the grid reflowing
+five times. The analytics console puts a KPI row, a 240 px chart, a percentile
+ladder and a twenty-row table on one page, where 16:10 gives a table either a
+scrollbar at ten rows or a lake of white space at three. The anti-reflow
+guarantee moves into the skeleton instead: a `chart` skeleton reserves the height
+the chart will occupy, a `table` skeleton reserves `rows` row-heights.
+
+Both share the ladder itself, and it is the load-bearing half: **error beats
+pending beats empty beats content**, and the caption renders only in the content
+branch. One failing endpoint costs the reader one card, never the page.
+
+### 10.3 The three range vocabularies
+
+There are three, deliberately, and **each file header states which question it
+answers.** Read it before reaching for one.
+
+| Module                                                           | Presets                                         | Unit                                                      | Question                                                          |
+| ---------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------- |
+| `components/dashboard/range.ts` (+ `RangePicker`)                | `7d · 30d · 90d · 12m` + custom calendar        | A **preset**, resolved to instants at request time        | "How is the product doing over a window?" — the analytics console |
+| `components/reports/report-range.ts` (+ `ReportRangePicker`)     | `2w · 4w · 8w` + a custom `{from,to}` pair      | **Calendar days** (`YYYY-MM-DD`), a fixed resolved window | "What did this sprint do?" — counts in sprints                    |
+| `components/admin/telemetry-range.ts` (+ `TelemetryRangePicker`) | `24h · 7d · 30d`, plus `all` for the event feed | **Instants**, bucketed by `date_trunc`                    | "Is the server healthy right now?" — the ops pages                |
+
+**`RangePicker` superseded the admin console's bespoke chips and nothing else.**
+The other two survived a deliberate review:
+
+- `report-range.ts` counts in **sprints** and produces a fixed window, not a
+  preset re-resolved against the clock. Migrating it would be a redesign of the
+  reports dashboard's window semantics, not a substitution.
+- `telemetry-range.ts` keeps the two windows the console's vocabulary cannot
+  express: **"All time"** for `/admin/telemetry/events` (a feed's commonest use
+  is "find the event I am looking for", and a hidden window turns that into a
+  support ticket) and **24 h** for `/admin/telemetry/requests`.
+
+**Anything that wants `7d/30d/90d/12m` uses `dashboard/RangePicker`.** The
+duplication is bounded at three and each one says why it exists.
+
+### 10.4 `DataTable` — TanStack **v9**, not v8
+
+`components/dashboard/DataTable.tsx` is one of the repo's two v9 tables (the
+other is `components/datatable/table-columns.tsx`, the project Table view).
+Four things differ from every v8 example on the internet, and all four are
+load-bearing:
+
+1. **Features are registered, not assumed.** `columnVisibilityFeature`,
+   `columnOrderingFeature` and `rowSortingFeature` are listed explicitly in the
+   module-scoped `dashboardTableFeatures = tableFeatures({...})`. Without them
+   `state.columnOrder` does not exist.
+2. **Row models are factories in the feature set, not options.**
+   `getCoreRowModel()` is gone; client sorting needs
+   `sortedRowModel: createSortedRowModel()` registered alongside the feature.
+3. **`columnDef.sortFn`, not `sortingFn`**, plus `sortUndefined: false` so
+   `compareValues` sees every value itself. `compareValues` is a
+   **direction-blind comparator** — it always ranks empty (`null`, `undefined`,
+   `''`) after non-empty, and TanStack re-inverts its result for a descending
+   sort. So blanks land **last ascending, first descending**, which is the far
+   end of whichever order was asked for. A direction-aware comparator here would
+   be fighting the library rather than the problem.
+4. **`columnMeta` is a type-only slot on the feature set**
+   (`columnMeta: {} as DashboardColumnMeta`), scoping the meta shape to this
+   grid rather than declaring it globally the way v8 did.
+
+The API: columns are built with `col<T>({ id, header, cell, sortField?,
+accessor?, align?, enableHiding? })` — **a column is sortable exactly when it has
+an `accessor`**. Sorting is a three-state header cycle (asc → desc → cleared),
+`enableMultiSort: false`. Pagination mode is decided by one prop: **`meta`
+present ⇒ server mode** (the caller owns sort and paging), **absent ⇒ client
+mode**. `PAGE_SIZE_OPTIONS = [20, 50, 100]`. Loading renders five skeleton rows
+and sets `aria-busy`; empty renders one spanning cell. An `aria-label` is
+required.
+
+**Column visibility, column order and density are in-memory only.** They are a
+momentary investigative posture, not a query — serializing them would put a
+table layout in every pasted link.
+
+### 10.5 `useGridUrlState` — filters, sort and paging in the URL
+
+`apps/web/src/hooks/useGridUrlState.ts`. A grid an admin cannot link or reload
+is a grid they rebuild from memory every time they follow a link out of it. The
+hook renders nothing; a page declares a `GridUrlCodec` and the hook drives it.
+
+Five rules every grid shares:
+
+1. **A param at its default is omitted** — the bare URL _is_ the default state.
+2. **Invalid values are dropped silently** and the URL is rewritten canonically;
+   `?sort=nonsense` hydrates the default rather than 422-ing the page.
+3. **A cleared enum serializes as present-but-empty** (`?sort=`) — a distinct
+   statement from "no sort param".
+4. **Typing and paging `replace`; discrete choices `push`.** A facet or a sort is
+   exactly the step a user expects Back to walk; a debounced text field would
+   otherwise stack one history entry per keystroke.
+5. **Foreign params are preserved** — only the declared keys are ever written or
+   removed.
+
+**Hydration happens once per URL, and `apply` must fire a single request.** On
+mount, and again whenever the query string changes without the hook having
+written it (Back/Forward, or an in-app link into a pre-filtered grid). A pasted
+`?archived=shown&q=acme` must produce **one** correctly-filtered request, never a
+default request followed by a corrected one.
+
+The pure codec — `encodeGridParams`, `decodeGridParams`, `ownedSearch`,
+`shouldPush` — is exported and is what the unit tests exercise, because every
+bug in this area has been about _which values reach the URL_, not about the
+effect wiring. The hook diffs against `window.location.search` rather than the
+rendered `useSearchParams()` value, since React Router runs navigations inside a
+transition; that is also why its consumer tests need a `BrowserRouter` — see
+[testing.md](./testing.md) §3.4.
+
+### 10.6 `chrome-copy.ts` — the kit's one i18n seam
+
+`useTableChromeCopy()` and `useRangeChromeCopy()` are **the only place the
+dashboard kit touches the catalog.** Every other component in the folder
+receives its copy as props.
+
+That is what makes the kit reusable without dragging a namespace decision into
+it: the returned **shapes** are the contract, and the keys behind them are an
+implementation detail that can move without touching a component.
+
+**The file carries a borrow table, split into KEPT and MINTED, and it is the
+model to follow.** The kit has no namespace of its own, so every string is read
+from one that already exists — `table:grid.*` / `config.*` / `footer.*` /
+`filters.*` for generic grid chrome, `common:actions.*` and
+`common:states.noResults` for the verbs. A borrow is **kept** where it is a fair
+reading of the same idea ("Columns" is the same control and the same word) and
+**minted** where it is not: three were moved to `common:grid.*` because
+`theme:groups.density` names a _Theme Studio setting_ rather than a per-grid
+toggle, `admin:range.label` put the shared picker's accessible name in the wrong
+namespace, and `reports:toolbar.rangePreset.custom` read one word out of a
+**different** range picker's preset list (§10.3), which would have chained two
+unrelated controls' wording together forever.
+
+**A new borrow goes in this module with a row in that table** — a `t('table:…')`
+inside `DataTable.tsx` would be a second answer to a question this file already
+answers, and an unjustified borrow is exactly how one surface's rewording
+silently reworders another's.
+
+### 10.7 Shared plot heights
+
+Three constants must agree, and they do:
+`PanelCard`'s `DEFAULT_CHART_HEIGHT = 240`, `MetricChart`'s
+`METRIC_CHART_HEIGHT = 240`, and `components/admin/ops-panel.ts`'s
+`OPS_CHART_BODY = 'h-60'`.
+
+`ops-panel.ts` exports that one string and exists because `RequestsChart` and
+`LatencyChart` sit side by side in a two-column grid on `/admin/telemetry` and
+`/admin/telemetry/requests`. They used to inherit a height from `ReportCard`'s
+pinned aspect; since they moved onto `PanelCard`, **the height is the caller's to
+state**, and two callers stating it separately is how a pair of side-by-side
+plots drifts apart.
+
+### 10.8 The kit's LTR islands
+
+`StatDelta` pins `dir="ltr"` on the pill itself. Its content is an arrow glyph,
+a sign, digits and a percent, and BiDi treats a leading `+`/`-` as neutral — so
+in Arabic `+12.5%` rendered as `12.5%+`, which reads as a footnote marker rather
+than as a rise. Pinning the **pill**, not the string, keeps the arrow on the
+number's leading side in both languages. The endpoint-path cells are the other
+one. Both are tabulated in [i18n.md](./i18n.md) §7.4.
+
+## 11. The Theme Studio drawer
+
+`apps/web/src/components/theme/ThemeStudioDrawer.tsx` — a 380 px end-docked
+panel over a scrim, opened from anywhere without leaving the page you are
+looking at.
+
+### 11.1 Why a drawer **and** `/theme`
+
+They answer two different questions. "Make the app blue" is a two-click job that
+should not cost a navigation away from the board you are looking at — and the
+whole point of a live-applying theme is watching the **real** app change, which
+a full-page editor covers up. "Which of these 22 tokens is making my charts
+muddy" is the opposite: it needs a token list, a preview pane and a leave guard,
+none of which fits in 380 px.
+
+So the drawer carries the **presets, the font faces and the word-labelled
+dimension groups**; `/theme` (§4) keeps the `TokenEditor`, the `ThemePreview`
+column and the `useBlocker` dirty guard, and the drawer links to it ("Advanced
+editor →"). `ThemePage` has a button back the other way, and both surfaces write
+the same live `useThemeStore` document. **The drawer has no leave guard of its
+own** — closing it changes nothing, and a reload is what discards an unsaved
+experiment.
+
+### 11.2 Anatomy
+
+- `<aside role="dialog" aria-modal="true">` + a scrim, both `z-[120]`,
+  **hand-rolled rather than `ui/sheet`**. A Radix modal does three things this
+  surface must not: it `aria-hidden`s the rest of the application, it disables
+  pointer events outside itself, and it restores focus by unmounting through a
+  presence animation. The panel therefore owns exactly the behaviours it needs —
+  focus on the close button when it opens, a Tab cycle inside the panel, Escape,
+  a scrim click, and **unmount on close**.
+- **The focus contract: the keyboard is trapped, the pointer is not** (R2 W3.5).
+  The on-panel Tab handler only sees keystrokes that reach the panel, so focus
+  parked on `document.body` (or in a portalled subtree) escaped on the next Tab
+  while `aria-modal` went on claiming otherwise. A document-level `focusin`
+  redirects it back — **only when the gesture that moved it was a key**, and in
+  the direction the keystroke implied (Shift+Tab → last focusable, Tab → first).
+  A pointer gesture is allowed to take focus out, because the app behind the
+  scrim is the preview; the next Tab brings it back. **Another modal or popover
+  claiming focus is exempt** — the palette (`mod+k` has no overlay gate) can open
+  over the drawer, and every dialog, sheet, popover, select and menu portals to
+  `body`, so without the exemption the backstop would yank focus straight out of
+  the palette's input.
+- **`z-[120]` is the drawer's own tier**, deliberately above the popover family
+  (R2 W3.5). The app's scale: `z-30` topbar · `z-50` sidebar · `z-[100]` the
+  modal tier (`ui/dialog`, `ui/sheet`, `ui/drawer`, `ui/alert-dialog`) ·
+  `z-[110]` the popover family (`ui/tooltip`, `ui/popover`, `ui/select`,
+  `ui/dropdown-menu`) · `z-[120]` this drawer. The family sits above the modal
+  tier so a `Select` inside a `Dialog` paints over it; this drawer inherited that
+  ordering and was painted through by tooltips and menus belonging to the app
+  **behind** its scrim, which portal to `body`. The price: a popover-family
+  primitive rendered from **inside** this panel would portal out at `z-[110]` and
+  paint behind it — the drawer renders none (every control is a plain `button`,
+  `input` or `textarea`, asserted by `ThemeStudioDrawer.test.tsx`), and one added
+  later needs `z-[130]` on its content.
+- A roving **tablist** of three: `colors`, `typography`, `layout`.
+- Colours tab: the preset gallery with `PresetPreviewMini` (a 64 px app-shell
+  mock per preset), a Light/Dark `role="radiogroup"`, and the Advanced-editor
+  link.
+- Typography and Layout tabs: `FONT_PRESETS` plus the same
+  `TYPOGRAPHY_GROUPS` / `LAYOUT_GROUPS` the full page uses, in their `compact`
+  variant.
+- Footer: a four-column grid — **Save · Reset · Export · Import** — with the
+  import panel inline and collapsed on every open, rather than the modal
+  `ImportThemeDialog` the page uses.
+
+### 11.3 Where it is mounted, and why not in the topbar
+
+The trigger is a topbar slot (`ThemeStudioSlot.tsx`, `zone: 'end'`, `order: 25`
+— between the bell at 20 and diagnostics at 30). **The drawer itself is not.**
+
+A slot renders inside the topbar's flex row, and a 380 px panel rendered from
+inside a `z-30` header is trapped in the header's stacking context, where
+`z-[100]` means "above the other things in the topbar" and nothing more — the
+sidebar (`z-50`) and every Radix overlay would paint over it. So the drawer is a
+**sibling of the app, mounted from `AppProviders` beside `<PaletteMount/>`**,
+which is the same answer the command palette reached for the same reason.
+
+**The price is router context, and `navigateApp` is the toll.** `AppProviders`
+sits above `<RouterProvider/>`, so `useNavigate()` throws there and `<Link>`
+cannot render. The Advanced-editor row pushes into the router **object** instead,
+injected as a `navigate` prop rather than imported, so the drawer stays testable
+with a `vi.fn()`.
+
+`mod+shift+t` **toggles** it, registered in
+`components/palette/GlobalShortcuts.tsx` like every other chord so the `?` cheat
+sheet stays truthful. Not `mod+t`: every browser owns that one and cannot be
+talked out of it. It carries the same `!overlayIsOpen()` gate as `?` and `c`
+(R2 W3.5) — two `aria-modal` surfaces would mean two focus traps on one Tab and
+two `body` scroll-lock cleanups racing — and that gate does **not** see this
+drawer (it queries `ui/dialog` / `ui/sheet` `data-slot`s), so the chord can still
+close what it opened.
+
+### 11.4 RTL
+
+The tablist's arrow keys are flipped by **physical** direction, read from the
+live DOM at keydown time:
+
+```ts
+const forward = event.key === (isRtlDocument(asideRef.current) ? 'ArrowLeft' : 'ArrowRight');
+```
+
+The WAI-ARIA tabs pattern defines the keys physically, and in a right-to-left
+interface the tabs are laid out end-to-start — so `ArrowRight` moves to the
+**previous** tab. Porting the LTR-only mapping would have given an Arabic reader
+a tablist whose arrows walk the wrong way. Reading the DOM rather than
+subscribing to `useLang()` is deliberate: it can never disagree with the
+CSS-driven slide, which is gated on `:where(html[dir='rtl'])`.
+
+The slide itself is `fb-drawer-in` / `fb-scrim-in` at `var(--speed)` — a
+**registered** motion entry, declared only under `data-motion='full'`, so a
+reduced-motion session gets a drawer that is simply already in place. See
+[motion.md](./motion.md) §4, entry `theme-drawer-in`.
 
 Back to [docs/INDEX.md](./INDEX.md) · [.agents/INDEX.md](../INDEX.md)

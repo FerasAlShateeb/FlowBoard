@@ -4,6 +4,7 @@
  *   GET    /                          global admin
  *   POST   /                          global admin
  *   PATCH  /:userId                   global admin
+ *   DELETE /:userId                   global admin  (anonymize + deactivate)
  *   POST   /:userId/reset-password    global admin
  *
  * Mounting at the full `/admin/users` prefix (rather than stacking a second
@@ -46,6 +47,12 @@ adminUsersRouter.patch(
   validate(adminUserParamsSchema, 'params'),
   validate(adminUpdateUserInputSchema, 'body'),
   asyncHandler(adminUsersController.updateUser),
+);
+
+adminUsersRouter.delete(
+  '/:userId',
+  validate(adminUserParamsSchema, 'params'),
+  asyncHandler(adminUsersController.deleteUser),
 );
 
 adminUsersRouter.post(

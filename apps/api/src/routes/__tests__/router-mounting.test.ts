@@ -19,7 +19,9 @@
  *     on the bare `/:projectId`. That sub-router claims only `/statuses` and
  *     `/transitions`.
  *  3. `/admin/users`, `/admin/telemetry` and `/admin/logs` are THREE routers on
- *     one prefix (WP4.7 added the middle one).
+ *     one prefix (WP4.7 added the middle one). ROUND 2 makes it SIX, adding
+ *     `/admin/analytics`, `/admin/projects` and `/admin/settings` — see the
+ *     Round 2 block at the bottom of this file.
  *
  * WAVE 4 ALSO ADDED A GUARD ASYMMETRY worth its own assertion: the telemetry
  * contract is two routers with opposite audiences — `/admin/telemetry/*` is
@@ -282,5 +284,95 @@ describe('foundation routes still answer', () => {
   it('serves /api/health publicly', async () => {
     const response = await request(app).get('/api/health');
     expect(response.status).toBe(200);
+  });
+});
+
+/**
+ * ── ROUND 2: the three routers W1.0 pre-mounted ─────────────────────────────
+ *
+ * `/admin/analytics`, `/admin/projects` and `/admin/settings` are mounted with
+ * their guards from the day the seam was created; W1.1 and W1.2 filled in the
+ * handlers behind them (the shared `501 not_implemented` body they carried in
+ * between is gone, deleted with its last call site in W3.1). This block asserts
+ * the two things that were TRUE IN BOTH STATES, so it did not have to be
+ * rewritten when the bodies landed — and so nobody had to open this
+ * stitch-adjacent file mid-wave:
+ *
+ *   - the GUARD contract: 401 with no session, 403 for a non-admin. That is
+ *     what the router-wide `use()` buys, and it is exactly what a per-route
+ *     guard added later would be able to lose.
+ *   - REACHABILITY: an authenticated global admin gets anything except a 404.
+ *     A 404 is what an unmounted path answers, and — because an empty router
+ *     falls straight through to the 404 handler — it is also what a router
+ *     mounted but never wired would answer. Asserting `not 404` distinguishes
+ *     "the seam works" from "the seam was never connected" while staying true
+ *     across the 501 → 200 transition.
+ *
+ * `/instance/config` rides along here because it is the ODD GUARD in the set:
+ * it is `requireAuth` only, deliberately, since every signed-in session reads it
+ * on boot. Mounting it under `/admin` (or giving it the admin guard by copy and
+ * paste) would break the app for every non-admin — a bug no unit test in the
+ * instance-settings suites can see, because that module passes its own tests
+ * either way. This is where it is caught, exactly as the telemetry pair above.
+ */
+describe('the Round 2 instance-admin and analytics mounts', () => {
+  const ADMIN_PATHS = [
+    '/api/admin/analytics/overview',
+    '/api/admin/analytics/engagement',
+    '/api/admin/analytics/work',
+    '/api/admin/analytics/traffic',
+    '/api/admin/analytics/growth',
+    '/api/admin/projects',
+    '/api/admin/settings',
+  ];
+
+  it('reaches every global-admin path — none of them 404s', async () => {
+    const token = auth(world.admin.id, true);
+
+    for (const path of ADMIN_PATHS) {
+      const response = await request(app).get(path).set('Authorization', token);
+      expect(response.status, path).not.toBe(404);
+    }
+  });
+
+  it('401s every one of them without a session', async () => {
+    for (const path of ADMIN_PATHS) {
+      expect((await request(app).get(path)).status, path).toBe(401);
+    }
+  });
+
+  it('403s every one of them for a signed-in non-admin', async () => {
+    const token = auth(world.member.id);
+
+    for (const path of ADMIN_PATHS) {
+      const response = await request(app).get(path).set('Authorization', token);
+      expect(response.status, path).toBe(403);
+    }
+  });
+
+  it('keeps the narrow /admin mounts ahead of the bare one', async () => {
+    // `adminLogsRouter` owns the bare `/admin`; if it ever answered first, the
+    // five narrow prefixes above would 404 and `/admin/logs` would still pass.
+    const token = auth(world.admin.id, true);
+
+    expect((await request(app).get('/api/admin/logs').set('Authorization', token)).status).toBe(
+      200,
+    );
+    expect((await request(app).get('/api/admin/users').set('Authorization', token)).status).toBe(
+      200,
+    );
+  });
+
+  it('serves /api/instance/config to a NON-admin — its guard is auth, not admin', async () => {
+    const response = await request(app)
+      .get('/api/instance/config')
+      .set('Authorization', auth(world.member.id));
+
+    expect(response.status).not.toBe(404);
+    expect(response.status).not.toBe(403);
+  });
+
+  it('still refuses /api/instance/config without a session', async () => {
+    expect((await request(app).get('/api/instance/config')).status).toBe(401);
   });
 });

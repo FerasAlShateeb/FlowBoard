@@ -91,6 +91,29 @@ export async function useLanguage(page: Page, lang: 'en' | 'ar'): Promise<void> 
   }, lang);
 }
 
+/**
+ * Set the device's motion preference before boot.
+ *
+ * BEFORE BOOT is the whole point, and it is why this is an init script rather
+ * than a `page.evaluate` after a `goto`. `initMotionPolicy()` runs inside
+ * `main.tsx`'s bootstrap — synchronously, before `createRoot().render()` — and
+ * stamps `<html data-motion="…">` once. The CSS gate keys off that attribute,
+ * so a value written after load is a value the stylesheet has already decided
+ * it does not have.
+ *
+ * `'full'` is the default for an absent or unrecognised key; `'system'` defers
+ * to `prefers-reduced-motion`, which a test should not depend on the machine to
+ * provide.
+ */
+export async function useMotionPreference(
+  page: Page,
+  preference: 'full' | 'reduced' | 'system',
+): Promise<void> {
+  await page.addInitScript((value: string) => {
+    window.localStorage.setItem('fb-motion-v1', value);
+  }, preference);
+}
+
 /** The sonner host. Toasts are text-only in this app — assert on the string. */
 export function toasts(page: Page): Locator {
   return page.getByTestId('toast-host');

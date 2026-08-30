@@ -3,12 +3,14 @@
 ## Mission
 
 Own `apps/web` — the Vite 7 + React 19 SPA: the boot sequence and token layer,
-the 26 hand-copied `components/ui/*` primitives, the router with guards and
+the 33 hand-copied `components/ui/*` primitives and the `components/dashboard/**`
+kit built on them, the navigation model, the router with guards and
 `errorElement`s, `lib/api.ts` and `lib/query-keys.ts`, every TanStack Query data
 hook, the UI-only Zustand stores, the five views plus the task sheet, and the
 platform features (realtime cache sync, presence, notifications, telemetry
-emitters, the diagnostics drawer, Theme Studio, the command palette and the
-shortcut registry).
+emitters, the diagnostics drawer, the Theme Studio and its drawer, the admin and
+analytics consoles, the motion policy, the command palette and the shortcut
+registry).
 
 The SPA is **complete and shipped**, in English and Arabic. Your job is to extend
 or repair it without breaking the invariants below. Read the nearest existing
@@ -28,10 +30,16 @@ before writing anything.
 5. [../docs/i18n.md](../docs/i18n.md) — **every string goes through `t()`**; logical properties only.
 6. [../docs/realtime.md](../docs/realtime.md) — **when touching mutations**: `X-Socket-Id`, echo suppression, the cache-write map, optimistic DnD.
 7. [../docs/testing.md](../docs/testing.md) — what belongs in a unit test vs a Playwright spec.
-8. The workflow for what you are doing:
+8. **When touching an admin or console surface**:
+   [../docs/admin.md](../docs/admin.md) ·
+   [../docs/analytics.md](../docs/analytics.md) ·
+   [../docs/motion.md](../docs/motion.md) — the nav model, the metric registry,
+   and the closed motion registry.
+9. The workflow for what you are doing:
    [add-view.md](../workflows/add-view.md) ·
    [add-translated-string.md](../workflows/add-translated-string.md) ·
-   [add-socket-event.md](../workflows/add-socket-event.md).
+   [add-socket-event.md](../workflows/add-socket-event.md) ·
+   [add-analytics-metric.md](../workflows/add-analytics-metric.md).
 
 ## File ownership
 
@@ -40,8 +48,11 @@ before writing anything.
   `apps/web/src/locales/{en,ar}/<area>.ts` **TypeScript** catalogs (not JSON —
   they are TS modules so the keys are typed), and your colocated tests.
 - **`apps/web/src/components/ui/*` is frozen.** A missing variant goes in your
-  handover, not in an edit: every view in the product renders through those 26
+  handover, not in an edit: every view in the product renders through those 33
   primitives, so a local "improvement" is a global restyle.
+  `components/dashboard/**` is **not** frozen, but it is shared chrome — read
+  [../docs/design-system.md](../docs/design-system.md) §10 before changing a
+  prop, and put any new copy in `chrome-copy.ts` rather than at a call site.
 - `apps/web/src/routes/index.tsx`, `apps/web/src/locales/{en,ar}/index.ts` and
   `apps/web/src/lib/query-keys.ts` are **stitch files** — if you are one of
   several parallel agents, request the entry rather than editing them.
@@ -51,7 +62,14 @@ before writing anything.
 ## Key rules to honour
 
 - **TanStack Query owns server state; Zustand owns UI state only.** Never cache
-  server data in a store.
+  server data in a store. There is exactly one sanctioned exception —
+  `useAnalyticsStore`, and it exists because the console needs a cold/warm
+  distinction TanStack cannot express; it is a documented decision, not a
+  precedent ([../docs/architecture.md](../docs/architecture.md) §7.4).
+- **Nothing animates without a registry entry.** Chrome moves at `--speed`;
+  anything else needs a row in `lib/motion-registry.ts` with its reduced branch,
+  and a `motion` import needs its file in `MOTION_LIBRARY_FILES` — enforced by
+  `lib/motion-imports.test.ts` ([../docs/motion.md](../docs/motion.md)).
 - **Query keys come from `lib/query-keys.ts`** — hierarchical tuples, so socket
   sync and invalidation can target a prefix. Never build a key inline.
 - **All HTTP goes through `lib/api.ts`**, which unwraps the envelope, zod-parses

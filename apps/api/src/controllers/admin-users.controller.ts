@@ -40,6 +40,20 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   respond(res, await adminUsersService.updateUser(actor.id, params.userId, input));
 }
 
+/**
+ * `DELETE /api/admin/users/:userId` — anonymize and deactivate.
+ *
+ * Answers 200 with the scrubbed row and the membership count, not 204: the
+ * confirmation dialog has to be able to say what access was actually revoked
+ * ("removed from 3 organizations"), and the table patches the row in place
+ * rather than dropping it — the account still exists, it just has no identity.
+ */
+export async function deleteUser(req: Request, res: Response): Promise<void> {
+  const actor = requireUser(req);
+  const params = getParsed<AdminUserParams>(res, 'params');
+  respond(res, await adminUsersService.deleteUser(actor.id, params.userId));
+}
+
 /** `POST /api/admin/users/:userId/reset-password` — sets it and revokes every session. */
 export async function resetPassword(_req: Request, res: Response): Promise<void> {
   const params = getParsed<AdminUserParams>(res, 'params');

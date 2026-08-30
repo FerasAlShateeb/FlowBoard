@@ -120,6 +120,22 @@ interface LayoutState {
   diagHeight: number;
   diagWidth: number;
 
+  /**
+   * The Theme Studio drawer (Round 2 §Theme D5).
+   *
+   * EPHEMERAL BY DESIGN — it is absent from `partialize` below, exactly like
+   * `paletteOpen` and `mobileNavOpen`. A modal panel restored over the app on
+   * the next reload is disorienting, and the drawer's own contents are already
+   * durable: the THEME persists (`fb-theme-v1`, written by `save()`), the panel
+   * that edits it does not. Adding it is therefore additive and NON-persisted,
+   * so `LAYOUT_STORAGE_VERSION` and `migrate` are untouched.
+   *
+   * Unlike `diagOpen` it IS closed by {@link LayoutState.closeAllOverlays}: the
+   * studio is a real modal (scrim, `aria-modal`), and Escape must dismiss it
+   * the way it dismisses every other modal overlay.
+   */
+  themeStudioOpen: boolean;
+
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebar: () => void;
   setMobileNavOpen: (open: boolean) => void;
@@ -131,6 +147,7 @@ interface LayoutState {
   cycleDiagDock: () => void;
   setDiagHeight: (height: number) => void;
   setDiagWidth: (width: number) => void;
+  setThemeStudioOpen: (open: boolean) => void;
   /** Escape behaviour: closes every MODAL overlay. */
   closeAllOverlays: () => void;
 }
@@ -152,6 +169,8 @@ export const useLayoutStore = create<LayoutState>()(
       diagDock: 'bottom',
       diagHeight: DIAG_HEIGHT_DEFAULT,
       diagWidth: DIAG_WIDTH_DEFAULT,
+
+      themeStudioOpen: false,
 
       setSidebarCollapsed: (sidebarCollapsed) => {
         set({ sidebarCollapsed });
@@ -194,11 +213,21 @@ export const useLayoutStore = create<LayoutState>()(
         set({ diagWidth: clampDiagWidth(width) });
       },
 
+      setThemeStudioOpen: (themeStudioOpen) => {
+        set({ themeStudioOpen });
+      },
+
       // `diagOpen` is deliberately NOT closed here: the diagnostics drawer is
       // NON-MODAL (devtools semantics), so a global Escape must not kill a live
       // log tail. It closes only via its own control or Ctrl+J.
+      //
+      // `themeStudioOpen` IS: the studio drawer is modal — it dims the app
+      // behind a scrim — and every modal in FlowBoard answers Escape. The
+      // drawer also handles the key locally (it is the focused element when it
+      // is open); this entry is what makes the answer the same when focus has
+      // wandered, and what keeps a single Escape from leaving a scrim behind.
       closeAllOverlays: () => {
-        set({ paletteOpen: false, mobileNavOpen: false });
+        set({ paletteOpen: false, mobileNavOpen: false, themeStudioOpen: false });
       },
     }),
     {
@@ -207,7 +236,9 @@ export const useLayoutStore = create<LayoutState>()(
       version: LAYOUT_STORAGE_VERSION,
       // Only genuine PREFERENCES persist. Transient open/closed state is
       // excluded on purpose: restoring a reload into an open palette, an open
-      // mobile drawer or an open devtools panel is disorienting, not helpful.
+      // mobile drawer, an open devtools panel or an open Theme Studio is
+      // disorienting, not helpful. (The studio's OUTPUT persists on its own —
+      // `fb-theme-v1` — which is why the panel itself never has to.)
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         diagDock: state.diagDock,

@@ -26,8 +26,9 @@ test('refuses a bad password and stays on the login page', async ({ page }) => {
 test('signs in through the form and signs out again', async ({ page }) => {
   await signInThroughForm(page, ADMIN);
 
-  // Asserting the URL rather than a spinner means the whole resolve-and-redirect
-  // path ran, not just that a request was fired.
+  // With two seeded orgs (Round 2), a fresh session lands on the org picker;
+  // choose acme the way a person would, then assert the org home rendered.
+  await page.locator(`a[href="/o/${ORG_SLUG}"]`).first().click();
   await page.waitForURL(`**/o/${ORG_SLUG}`);
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
 

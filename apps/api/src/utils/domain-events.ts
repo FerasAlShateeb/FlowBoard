@@ -195,6 +195,27 @@ export interface DomainEventMap {
    * the connections.
    */
   'user.revoked': { userId: Uuid };
+  /**
+   * An organization has just been archived (`organizations.deleted_at` set by
+   * `orgs.service.softDeleteOrg`).
+   *
+   * ORG-SCOPED, like {@link DomainEventMap['user.revoked']} is account-scoped:
+   * no {@link DomainEventContext}, because there is no single project, no
+   * originating tab worth excluding (everyone in the org loses access at once),
+   * and the actor is a global admin who is not in any of these rooms.
+   *
+   * WHY IT EXISTS. R2 W3.5 made the HTTP guards and `project:join` refuse an
+   * archived org (`middlewares/require-roles.ts` documents the fix), which
+   * covers every FUTURE request. It does nothing about a socket that is already
+   * sitting in one of the org's project rooms — that membership was checked once,
+   * at join time — so those tabs kept receiving task, comment, presence and
+   * workflow traffic for an organization the admin had just switched off.
+   *
+   * `projectIds` is DENORMALISED onto the event, exactly as `task.created`
+   * carries its `statusId`: the subscriber must be able to route without a
+   * database read, and the publisher already has the ids in hand.
+   */
+  'org.archived': { orgId: Uuid; projectIds: readonly Uuid[] };
   'notification.created': {
     /** Who the bell badge should light up for. */
     recipientId: Uuid;

@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 import type { RouteScope } from '@/hooks/useRouteScope';
 import { useOrgBySlug } from '@/hooks/useOrgs';
 import { useOrgSearch } from '@/hooks/useSearch';
+import { getLastOrgSlug } from '@/hooks/useLastOrg';
+import { useInstanceConfig } from '@/hooks/useInstanceConfig';
 import { useAuthStore } from '@/stores/useAuthStore';
 import { useLayoutStore } from '@/stores/useLayoutStore';
 import { usePaletteStore } from '@/stores/usePaletteStore';
@@ -221,7 +223,10 @@ export function PaletteBody({ scope, navigate }: CommandPaletteProps) {
   const setCreateTaskOpen = usePaletteStore((state) => state.setCreateTaskOpen);
 
   // Chrome only — every one of these destinations is re-checked by the API.
-  const isGlobalAdmin = useAuthStore((state) => state.isGlobalAdmin());
+  // EFFECTIVE, not real: an admin previewing the product as a member must not
+  // find the admin console through Ctrl+K either.
+  const effectiveAdmin = useAuthStore((state) => state.isEffectiveGlobalAdmin());
+  const { defaultOrgSlug } = useInstanceConfig();
   const { org } = useOrgBySlug(scope.orgSlug);
   const search = useOrgSearch(org?.id, query);
 
@@ -230,9 +235,15 @@ export function PaletteBody({ scope, navigate }: CommandPaletteProps) {
       buildPaletteItems({
         orgSlug: scope.orgSlug,
         projectKey: scope.projectKey,
-        isGlobalAdmin,
+        effectiveAdmin,
+        // The same fallback ladder the sidebar uses, so Ctrl+K on `/admin/*`
+        // still offers a route into an organization. Read at render: it is a
+        // string in `localStorage` that changes on navigation, and the palette
+        // re-renders on every one of those anyway.
+        lastOrgSlug: getLastOrgSlug(),
+        defaultOrgSlug,
       }),
-    [scope.orgSlug, scope.projectKey, isGlobalAdmin],
+    [scope.orgSlug, scope.projectKey, effectiveAdmin, defaultOrgSlug],
   );
 
   // `t` changes identity on a language switch — which is exactly when every
@@ -262,6 +273,9 @@ export function PaletteBody({ scope, navigate }: CommandPaletteProps) {
           return;
         case 'diagnostics':
           useLayoutStore.getState().setDiagOpen(true);
+          return;
+        case 'theme-studio':
+          useLayoutStore.getState().setThemeStudioOpen(true);
           return;
       }
     },

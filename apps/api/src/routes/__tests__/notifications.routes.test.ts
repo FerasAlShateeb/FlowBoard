@@ -15,11 +15,11 @@
  */
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Notification, NotificationType, UnreadCount } from '@flowboard/shared';
 
-import { db, notifications } from '../../db';
+import { db, notifications, users } from '../../db';
 import { closeDb } from '../../db/client';
 import { errorHandler, notFound } from '../../middlewares/error-handler';
 import { ensureTestDb, truncateAllTables } from '../../test/test-db';
@@ -352,5 +352,89 @@ describe('POST /api/notifications/read-all', () => {
       .post('/api/notifications/read-all')
       .set('Authorization', auth(ada));
     expect(res.body.data).toEqual({ marked: 0 });
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * THE LIVENESS RECHECK (R2 W3.5).
+ *
+ * `requireAuth` verifies a signature and nothing more — the `token_version` /
+ * `is_active` re-read is lazy by design, and every OTHER authenticated surface
+ * pays for it somewhere: the project and org guards do it in `require-roles`,
+ * `/auth/me` and `/auth/refresh` do it through `loadLiveUser`. This router had a
+ * role guard to hang it on, which is why it had no recheck at all — and it is
+ * the surface a revoked session is most likely to still have open, because the
+ * bell polls it on a timer.
+ *
+ * Both revocation shapes are asserted, because they are separate columns: an
+ * admin DEACTIVATING an account (`is_active = false`) and an admin FORCE-
+ * REVOKING its sessions (`token_version + 1`), the second of which leaves a
+ * perfectly active account holding a token that must no longer work.
+ */
+describe('a revoked session', () => {
+  const endpoints = [
+    ['get', '/api/notifications'],
+    ['get', '/api/notifications/unread-count'],
+    ['post', '/api/notifications/read-all'],
+  ] as const;
+
+  it('401s every endpoint after the account is DEACTIVATED', async () => {
+    await seedNotification(ada);
+    await db.update(users).set({ isActive: false }).where(eq(users.id, ada.id));
+
+    for (const [method, path] of endpoints) {
+      const res = await request(app)[method](path).set('Authorization', auth(ada));
+      expect(res.status, `${method.toUpperCase()} ${path}`).toBe(401);
+      expect(res.body.success).toBe(false);
+    }
+  });
+
+  it('401s every endpoint after token_version is BUMPED', async () => {
+    await seedNotification(ada);
+    await db
+      .update(users)
+      .set({ tokenVersion: sql`${users.tokenVersion} + 1` })
+      .where(eq(users.id, ada.id));
+
+    for (const [method, path] of endpoints) {
+      const res = await request(app)[method](path).set('Authorization', auth(ada));
+      expect(res.status, `${method.toUpperCase()} ${path}`).toBe(401);
+    }
+  });
+
+  it('401s the two body-carrying mark-read routes too', async () => {
+    const id = await seedNotification(ada);
+    await db.update(users).set({ isActive: false }).where(eq(users.id, ada.id));
+
+    const one = await request(app)
+      .post(`/api/notifications/${id}/read`)
+      .set('Authorization', auth(ada));
+    const many = await request(app)
+      .post('/api/notifications/read')
+      .set('Authorization', auth(ada))
+      .send({ ids: [id] });
+
+    expect(one.status).toBe(401);
+    expect(many.status).toBe(401);
+
+    // And nothing was written on the way to the refusal.
+    const [row] = await db
+      .select({ readAt: notifications.readAt })
+      .from(notifications)
+      .where(eq(notifications.id, id));
+    expect(row?.readAt).toBeNull();
+  });
+
+  it('still serves a LIVE account — the recheck is not a blanket refusal', async () => {
+    await seedNotification(ada);
+
+    const res = await request(app)
+      .get('/api/notifications/unread-count')
+      .set('Authorization', auth(ada));
+
+    expect(res.status).toBe(200);
+    expect((res.body.data as UnreadCount).count).toBe(1);
   });
 });

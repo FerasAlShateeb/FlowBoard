@@ -14,9 +14,9 @@ import type { BrowserContext } from '@playwright/test';
  * product bug; it has been reported. Its user-visible cost is that an office
  * behind one egress IP shares a single 300-per-minute budget.)
  *
- * For this suite it means one thing: all forty-one tests, every browser context
- * and every API helper call share ONE bucket, and no amount of signing in as
- * different people changes that.
+ * For this suite it means one thing: every test, every browser context and every
+ * API helper call share ONE bucket, and no amount of signing in as different
+ * people changes that.
  *
  * ── Why a 429 here is so expensive ──────────────────────────────────────────
  *
@@ -29,10 +29,10 @@ import type { BrowserContext } from '@playwright/test';
  *
  * ── What this does ──────────────────────────────────────────────────────────
  *
- * One page load of this app costs eight to ten requests, so a run is ~1 100 of
- * them. Spread evenly that is ~190 a minute and comfortably legal; the measured
- * problem was distribution, not volume — three consecutive minutes at 266-284
- * followed by quiet ones. So every API request the suite makes, from the browser
+ * One page load of this app costs eight to ten requests, so a run is well into
+ * four figures. Spread evenly that is comfortably legal; the measured problem
+ * was distribution, not volume — three consecutive minutes at 266-284 followed
+ * by quiet ones. So every API request the suite makes, from the browser
  * or from `helpers/api.ts`, is counted, and each test waits at the starting line
  * until the last minute has room for what it is about to spend. That smooths the
  * peaks into the troughs: it costs almost no wall-clock time, because the run was

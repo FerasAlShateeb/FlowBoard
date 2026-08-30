@@ -29,9 +29,11 @@ test('signs in, lands on the org home, opens a project and its settings', async 
   await expect(page.getByRole('heading', { name: 'Sign in to FlowBoard' })).toBeVisible();
   await signInThroughForm(page, ADMIN);
 
-  // The post-login landing is `/` -> `HomePage`, which redirects to the only
-  // org the admin belongs to. Asserting the URL rather than a spinner means the
-  // whole resolve-and-redirect path ran, not just that a request was fired.
+  // The post-login landing is `/` -> `HomePage`. Since the seed grew a second
+  // organization (Round 2), a fresh session has no remembered org and lands on
+  // the org PICKER rather than auto-redirecting — that is the product behavior,
+  // so the test picks acme the way a person would.
+  await page.locator(`a[href="/o/${ORG_SLUG}"]`).first().click();
   await page.waitForURL(`**/o/${ORG_SLUG}`);
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible();
 

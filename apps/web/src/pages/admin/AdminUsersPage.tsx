@@ -1,22 +1,31 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { toast } from 'sonner';
 import {
+  Building2,
+  Download,
   Ellipsis,
   KeyRound,
   LogOut,
   Search,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   UserPlus,
   Users,
 } from 'lucide-react';
-import { provisionUserInputSchema, type AdminUpdateUserInput, type User } from '@flowboard/shared';
+import {
+  provisionUserInputSchema,
+  type AdminUpdateUserInput,
+  type AdminUserRow,
+  type ProvisionMembership,
+} from '@flowboard/shared';
 import type { z } from 'zod';
 
 import { getIntlLocale } from '@/lib/lang-policy';
+import { csvFilename, toCsv, type CsvRow } from '@/lib/csv';
 import {
   generateTempPassword,
   useAdminUsers,
@@ -25,7 +34,12 @@ import {
   useUpdateAdminUser,
   type AdminUserFilters,
 } from '@/hooks/useAdminUsers';
+import { useGridUrlState, type GridParamDefs } from '@/hooks/useGridUrlState';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { downloadCsvBlob } from '@/components/dashboard/save-blob';
+import { DeleteUserDialog } from '@/components/admin/users/DeleteUserDialog';
+import { MembershipsDialog } from '@/components/admin/users/MembershipsDialog';
+import { OrgMembershipPicker } from '@/components/admin/users/OrgMembershipPicker';
 import PageHeader from '@/components/common/PageHeader';
 import EmptyState from '@/components/common/EmptyState';
 import ErrorState from '@/components/common/ErrorState';
@@ -33,7 +47,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog';
 import FormDialog from '@/components/common/FormDialog';
 import CopyButton from '@/components/common/CopyButton';
 import { UserChip } from '@/components/common/UserAvatar';
-import TablePagination, { type PageSize } from '@/components/datatable/TablePagination';
+import TablePagination, { PAGE_SIZES, type PageSize } from '@/components/datatable/TablePagination';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -103,19 +117,72 @@ import {
  * only surface that could let them back in has a very expensive problem. The
  * menu simply does not offer them, which is chrome; the server is the guard.
  *
- * ═══ WHAT THE TABLE DOES NOT SHOW, AND WHY ════════════════════════════════
+ * ═══ MEMBERSHIPS (ROUND 2) ════════════════════════════════════════════════
  *
- * Org memberships and last-activity are absent because `userSchema` — the row
- * shape the list endpoint returns — carries neither. `orgMemberships` is
- * WRITE-ONLY, accepted at provisioning time and never read back. Rendering
- * either would mean N+1 requests from a table, so the honest answer is to show
- * what the endpoint knows and leave memberships to the org pages that own them.
+ * This page used to say, right here, that memberships could not be shown
+ * because `userSchema` did not carry them and `orgMemberships` was write-only.
+ * Both halves of that are now false: the list endpoint returns
+ * `adminUserRowSchema` — the account PLUS every organization it belongs to,
+ * joined once rather than N+1 — and the memberships dialog reads them back
+ * through the org's own membership endpoints. The column renders chips with an
+ * overflow count; the dialog is where they are edited.
+ *
+ * ═══ THE FILTERS LIVE IN THE URL ══════════════════════════════════════════
+ *
+ * A filtered directory that cannot be linked or reloaded is one an admin has to
+ * rebuild from memory every time they follow a link out of it. `q`, `status`,
+ * `page` and `pageSize` round-trip through `useGridUrlState`; nothing else does
+ * (see that module's header on why a table LAYOUT does not belong in a URL).
+ *
+ * ═══ WHAT IS STILL NOT HERE, AND WHY ══════════════════════════════════════
+ *
+ * **Sortable columns.** `adminUserListQuerySchema` is `paginationQuerySchema`
+ * plus `q`/`isActive` — there is no `?sort` on this endpoint, so sortable
+ * headers would either lie (sorting one page of twenty-five out of nine hundred
+ * rows) or need a server change this package does not own. The list is
+ * newest-first, which is what an admin directory is usually read as.
+ *
+ * **A whole-result CSV.** The export writes the rows currently on screen. There
+ * is no unpaginated read, and a client that pages through forty requests to
+ * build a file is a denial-of-service against its own API. The filename carries
+ * the date; the filters are the admin's own.
  */
 
 /** Rows per page. Matches the API's own default. */
 const DEFAULT_PAGE_SIZE: PageSize = 25;
 
 type StatusFilter = 'all' | 'active' | 'inactive';
+
+/**
+ * The URL-synced grid state.
+ *
+ * A TYPE, not an interface: `useGridUrlState` constrains its state to
+ * `Record<string, GridUrlValue>`, and TypeScript only grants object-literal
+ * TYPES the implicit index signature that satisfies it.
+ */
+type UserGridState = {
+  q: string;
+  status: StatusFilter;
+  page: number;
+  pageSize: number;
+};
+
+const USER_GRID_PARAMS: GridParamDefs<UserGridState> = {
+  q: { kind: 'text', maxLength: 120 },
+  status: { kind: 'enum', values: ['all', 'active', 'inactive'], default: 'all' },
+  page: { kind: 'int', default: 1, min: 1, max: 10_000 },
+  pageSize: { kind: 'int', default: DEFAULT_PAGE_SIZE, values: PAGE_SIZES },
+};
+
+const INITIAL_GRID_STATE: UserGridState = {
+  q: '',
+  status: 'all',
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
+};
+
+/** How many org chips a row shows before it collapses the rest into `+n`. */
+const MEMBERSHIP_CHIP_LIMIT = 2;
 
 /**
  * The provision form's schema — the wire schema MINUS the two fields the form
@@ -139,10 +206,38 @@ type ProvisionValues = z.input<typeof provisionFormSchema>;
 export default function AdminUsersPage() {
   const { t } = useTranslation(['admin', 'common']);
 
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('all');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
+  /* -------- grid state, mirrored in a ref for the URL codec -------- */
+  const [grid, setGrid] = useState<UserGridState>(INITIAL_GRID_STATE);
+  // `useGridUrlState.get()` runs inside an EFFECT, one commit after the render
+  // that built the codec — so it must read a value hydration can update
+  // SYNCHRONOUSLY. A closure over `grid` is one commit stale, and the writer
+  // effect would flush the pre-hydration state back over the URL it just read.
+  const gridRef = useRef(grid);
+  const apply = (next: UserGridState) => {
+    gridRef.current = next;
+    setGrid(next);
+  };
+
+  /**
+   * Any filter change resets to page 1.
+   *
+   * Not cosmetic: narrowing a search while on page 4 of the unfiltered set
+   * requests page 4 of a result that may have one page, and the server answers
+   * with an empty array — a table that looks broken because the user typed.
+   */
+  const commit = (next: Partial<UserGridState>) => {
+    apply({ ...gridRef.current, page: 1, ...next });
+  };
+
+  useGridUrlState<UserGridState>({
+    params: USER_GRID_PARAMS,
+    get: () => gridRef.current,
+    apply,
+    // A discrete choice is the step Back should walk; typing and paging are not.
+    push: ['status'],
+  });
+
+  const { q: search, status, page, pageSize } = grid;
 
   const filters = useMemo<AdminUserFilters>(
     () => ({
@@ -157,25 +252,13 @@ export default function AdminUsersPage() {
 
   const meId = useAuthStore((state) => state.user?.id);
 
-  /**
-   * Any filter change resets to page 1.
-   *
-   * Not cosmetic: narrowing a search while on page 4 of the unfiltered set
-   * requests page 4 of a result that may have one page, and the server answers
-   * with an empty array — a table that looks broken because the user typed.
-   */
-  const commit = (next: () => void) => {
-    next();
-    setPage(1);
-  };
-
   // ── The confirmable row actions ───────────────────────────────────────────
   // One piece of state for all five: only one confirm can be open at a time,
   // and modelling that as five booleans invites the state where two are true.
   // Typed to `PatchAction`, so the lookup tables below are exhaustive by
   // construction and `resetPassword` — which is a different request entirely —
   // cannot reach them.
-  const [pending, setPending] = useState<{ user: User; action: PatchAction } | null>(null);
+  const [pending, setPending] = useState<{ user: AdminUserRow; action: PatchAction } | null>(null);
 
   const runPendingAction = () => {
     if (!pending) return;
@@ -196,9 +279,48 @@ export default function AdminUsersPage() {
   const [provisionOpen, setProvisionOpen] = useState(false);
   /** The one-shot credential dialog: `null` when nothing is being revealed. */
   const [revealed, setRevealed] = useState<{ name: string; password: string } | null>(null);
-  const [resetting, setResetting] = useState<User | null>(null);
+  const [resetting, setResetting] = useState<AdminUserRow | null>(null);
+
+  // ── The two Round 2 dialogs ───────────────────────────────────────────────
+  const [managing, setManaging] = useState<AdminUserRow | null>(null);
+  const [deleting, setDeleting] = useState<AdminUserRow | null>(null);
 
   const rows = query.data?.rows ?? [];
+
+  /**
+   * The rows currently on screen, as a CSV.
+   *
+   * Built from the same `AdminUserRow`s the table renders, with LOCALIZED
+   * headers and machine values — `lib/csv` stringifies numbers with `String()`
+   * so a consumer that parses the file back is not handed `Intl` output. The
+   * memberships column is flattened to `name (role)` pairs, which is the only
+   * shape that survives a single cell.
+   */
+  const exportCsv = () => {
+    const headers = [
+      { key: 'name', label: t('admin:users.csv.name') },
+      { key: 'email', label: t('admin:users.csv.email') },
+      { key: 'access', label: t('admin:users.csv.access') },
+      { key: 'status', label: t('admin:users.csv.status') },
+      { key: 'organizations', label: t('admin:users.csv.organizations') },
+      { key: 'created', label: t('admin:users.csv.created') },
+    ] as const;
+
+    const csvRows: CsvRow[] = rows.map((user) => ({
+      name: user.name,
+      email: user.email,
+      access: user.isGlobalAdmin
+        ? t('admin:users.badge.globalAdmin')
+        : t('admin:users.badge.member'),
+      status: user.isActive ? t('admin:users.badge.active') : t('admin:users.badge.inactive'),
+      organizations: user.memberships
+        .map((entry) => `${entry.orgName} (${t(`admin:users.orgRole.${entry.role}`)})`)
+        .join('; '),
+      created: user.createdAt,
+    }));
+
+    downloadCsvBlob(toCsv(csvRows, headers), csvFilename(t('admin:users.exportName')));
+  };
 
   return (
     <section className="flex flex-col gap-[var(--gap)]">
@@ -206,15 +328,27 @@ export default function AdminUsersPage() {
         title={t('admin:users.title')}
         description={t('admin:users.description')}
         actions={
-          <Button
-            size="sm"
-            onClick={() => {
-              setProvisionOpen(true);
-            }}
-          >
-            <UserPlus aria-hidden />
-            {t('admin:users.actions.provision')}
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={rows.length === 0}
+              onClick={exportCsv}
+              data-testid="export-users-csv"
+            >
+              <Download aria-hidden />
+              {t('admin:users.exportCsv')}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setProvisionOpen(true);
+              }}
+            >
+              <UserPlus aria-hidden />
+              {t('admin:users.actions.provision')}
+            </Button>
+          </>
         }
       >
         <div className="flex flex-wrap items-center gap-2">
@@ -226,10 +360,7 @@ export default function AdminUsersPage() {
             <Input
               value={search}
               onChange={(event) => {
-                const { value } = event.target;
-                commit(() => {
-                  setSearch(value);
-                });
+                commit({ q: event.target.value });
               }}
               className="h-7 ps-8 text-xs"
               placeholder={t('admin:users.searchPlaceholder')}
@@ -240,9 +371,7 @@ export default function AdminUsersPage() {
           <Select
             value={status}
             onValueChange={(value) => {
-              commit(() => {
-                setStatus(value as StatusFilter);
-              });
+              commit({ status: value as StatusFilter });
             }}
           >
             <SelectTrigger size="sm" className="w-40" aria-label={t('admin:users.filter.status')}>
@@ -285,6 +414,9 @@ export default function AdminUsersPage() {
                 <TableHead className="hidden md:table-cell">
                   {t('admin:users.column.role')}
                 </TableHead>
+                <TableHead className="hidden lg:table-cell">
+                  {t('admin:users.column.memberships')}
+                </TableHead>
                 <TableHead className="w-28">{t('admin:users.column.status')}</TableHead>
                 <TableHead className="hidden w-32 lg:table-cell">
                   {t('admin:users.column.created')}
@@ -302,6 +434,8 @@ export default function AdminUsersPage() {
                   isSelf={user.id === meId}
                   onAction={(action) => {
                     if (action === 'resetPassword') setResetting(user);
+                    else if (action === 'memberships') setManaging(user);
+                    else if (action === 'delete') setDeleting(user);
                     else setPending({ user, action });
                   }}
                 />
@@ -314,12 +448,12 @@ export default function AdminUsersPage() {
       <TablePagination
         meta={query.data?.meta}
         page={page}
-        pageSize={pageSize}
-        onPageChange={setPage}
+        pageSize={pageSize as PageSize}
+        onPageChange={(next) => {
+          apply({ ...gridRef.current, page: next });
+        }}
         onPageSizeChange={(next) => {
-          commit(() => {
-            setPageSize(next);
-          });
+          commit({ pageSize: next });
         }}
       />
 
@@ -364,6 +498,26 @@ export default function AdminUsersPage() {
           setRevealed(null);
         }}
       />
+
+      {/*
+        The FRESH row, re-derived from the list every render. `managing` is a
+        snapshot taken when the menu item was clicked; every membership write
+        invalidates the directory, and a dialog rendering its own stale snapshot
+        would show the change only after being closed and reopened.
+      */}
+      <MembershipsDialog
+        user={managing === null ? null : (rows.find((row) => row.id === managing.id) ?? managing)}
+        onOpenChange={(next) => {
+          if (!next) setManaging(null);
+        }}
+      />
+
+      <DeleteUserDialog
+        user={deleting}
+        onOpenChange={(next) => {
+          if (!next) setDeleting(null);
+        }}
+      />
     </section>
   );
 }
@@ -380,12 +534,27 @@ export default function AdminUsersPage() {
  * and the mutation, and the failure mode of that shape is a dialog that says
  * one thing while the request does another.
  */
-type RowAction = 'activate' | 'deactivate' | 'promote' | 'demote' | 'forceLogout' | 'resetPassword';
+type RowAction =
+  | 'activate'
+  | 'deactivate'
+  | 'promote'
+  | 'demote'
+  | 'forceLogout'
+  | 'resetPassword'
+  | 'memberships'
+  | 'delete';
 
-/** The subset that goes through the shared PATCH. */
-type PatchAction = Exclude<RowAction, 'resetPassword'>;
+/**
+ * The subset that goes through the shared PATCH.
+ *
+ * `resetPassword` is a different route; `memberships` opens a dialog that talks
+ * to the ORG endpoints; `delete` is its own DELETE. Excluding all three by type
+ * is what keeps the four lookup tables below exhaustive by construction — a new
+ * action that is not a PATCH cannot silently acquire an empty body.
+ */
+type PatchAction = Exclude<RowAction, 'resetPassword' | 'memberships' | 'delete'>;
 
-const PATCH_FOR: Record<PatchAction, (user: User) => AdminUpdateUserInput> = {
+const PATCH_FOR: Record<PatchAction, (user: AdminUserRow) => AdminUpdateUserInput> = {
   // Deactivating already bumps `token_version` server-side, so it does not also
   // need `forceLogout` — the server collapses both into one bump anyway.
   activate: () => ({ isActive: true }),
@@ -447,7 +616,7 @@ function UserRow({
   isSelf,
   onAction,
 }: {
-  user: User;
+  user: AdminUserRow;
   isSelf: boolean;
   onAction: (action: RowAction) => void;
 }) {
@@ -473,6 +642,47 @@ function UserRow({
           </Badge>
         ) : (
           <span className="text-xs text-muted-foreground">{t('admin:users.badge.member')}</span>
+        )}
+      </TableCell>
+
+      {/*
+        MEMBERSHIPS. Two chips and a `+n`, not a wrapped list: this column sits
+        between two narrow ones and a row that grows to five lines makes the
+        whole table unscannable. "None" is a real answer — a freshly provisioned
+        global admin belongs to no organization — so it is written out rather
+        than left blank, which would read as data that failed to load.
+      */}
+      <TableCell className="hidden lg:table-cell">
+        {user.memberships.length === 0 ? (
+          <span className="text-xs text-muted-foreground">{t('admin:users.memberships.none')}</span>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1" data-testid="user-memberships">
+            {user.memberships.slice(0, MEMBERSHIP_CHIP_LIMIT).map((entry) => (
+              <Badge
+                key={entry.orgId}
+                variant={entry.role === 'admin' ? 'soft-primary' : 'outline'}
+                title={t(`admin:users.orgRole.${entry.role}`)}
+              >
+                <Building2 aria-hidden />
+                {entry.orgName}
+              </Badge>
+            ))}
+            {user.memberships.length > MEMBERSHIP_CHIP_LIMIT ? (
+              <Badge
+                variant="outline"
+                // The names the chips could not fit, so the count is inspectable
+                // without opening the dialog.
+                title={user.memberships
+                  .slice(MEMBERSHIP_CHIP_LIMIT)
+                  .map((entry) => entry.orgName)
+                  .join(', ')}
+              >
+                {t('admin:users.memberships.overflow', {
+                  overflow: String(user.memberships.length - MEMBERSHIP_CHIP_LIMIT),
+                })}
+              </Badge>
+            ) : null}
+          </div>
         )}
       </TableCell>
 
@@ -524,6 +734,15 @@ function UserRow({
               {t('admin:users.actions.forceLogout')}
             </DropdownMenuItem>
 
+            <DropdownMenuItem
+              onSelect={() => {
+                onAction('memberships');
+              }}
+            >
+              <Building2 aria-hidden />
+              {t('admin:users.actions.memberships')}
+            </DropdownMenuItem>
+
             <DropdownMenuSeparator />
 
             {/*
@@ -557,6 +776,25 @@ function UserRow({
               </DropdownMenuItem>
             )}
 
+            {/*
+              DELETION. Anonymize-and-deactivate, and the only row action with
+              no undo of any kind — which is why it sits below the separator,
+              wears the destructive variant, and is never offered for your own
+              account (an admin who anonymizes themselves has revoked their own
+              sessions and cannot sign back in to fix it).
+            */}
+            {isSelf ? null : (
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => {
+                  onAction('delete');
+                }}
+              >
+                <Trash2 aria-hidden />
+                {t('admin:users.actions.delete')}
+              </DropdownMenuItem>
+            )}
+
             {isSelf ? (
               <p className="px-2 py-1.5 text-[11px] text-muted-foreground">
                 {t('admin:users.selfGuard')}
@@ -581,11 +819,13 @@ function UserRow({
  * the policy is met. It is minted at submit time rather than at open time so a
  * dialog left open does not sit on a credential.
  *
- * `orgMemberships` is deliberately not offered here. It is write-only on the
- * API (accepted at creation, never read back), so a picker in this dialog would
- * be the only place in the product where org membership is set and the only
- * place it cannot then be verified. Memberships belong to the org pages, which
- * both set and show them.
+ * `orgMemberships` IS offered here (Round 2). The old note said it should not
+ * be, because the field was write-only and a picker would set something the
+ * product could never show back. That is no longer true: the directory renders
+ * a memberships column and the manage-memberships dialog edits it, so the
+ * grants made here are visible one row away — and the API applies them in the
+ * SAME TRANSACTION as the account, which is the only path that cannot leave a
+ * new user belonging nowhere.
  */
 function ProvisionDialog({
   open,
@@ -598,6 +838,12 @@ function ProvisionDialog({
 }) {
   const { t } = useTranslation(['admin', 'common']);
   const provision = useProvisionUser();
+
+  // NOT an RHF field. `orgMemberships` is an array of objects edited by a
+  // bespoke control with no single input to register, and registering it as a
+  // field array would buy validation the shared schema already applies at the
+  // boundary. It resets alongside the form on success.
+  const [memberships, setMemberships] = useState<ProvisionMembership[]>([]);
 
   const form = useForm<ProvisionValues>({
     resolver: zodResolver(provisionFormSchema),
@@ -621,12 +867,13 @@ function ProvisionDialog({
         password,
         isGlobalAdmin: values.isGlobalAdmin ?? false,
         locale: values.locale ?? 'en',
-        orgMemberships: [],
+        orgMemberships: memberships,
       },
       {
         onSuccess: (user) => {
           toast.success(t('admin:users.provision.created', { name: user.name }));
           form.reset();
+          setMemberships([]);
           onProvisioned(user.name, password);
         },
       },
@@ -689,6 +936,16 @@ function ProvisionDialog({
           </FormItem>
         )}
       />
+
+      <div className="grid gap-1.5">
+        <span className="text-sm font-medium">{t('admin:users.provision.orgs')}</span>
+        <OrgMembershipPicker
+          value={memberships}
+          onChange={setMemberships}
+          disabled={provision.isPending}
+        />
+        <p className="text-xs text-muted-foreground">{t('admin:users.provision.orgsHint')}</p>
+      </div>
     </FormDialog>
   );
 }
@@ -706,7 +963,7 @@ function ResetPasswordDialog({
   onOpenChange,
   onReset,
 }: {
-  user: User | null;
+  user: AdminUserRow | null;
   onOpenChange: (open: boolean) => void;
   onReset: (name: string, password: string) => void;
 }) {

@@ -17,6 +17,27 @@ import { TELEMETRY_PRESETS, type TelemetryFilterPreset } from './telemetry-range
  * they retune the data in the panels already on screen — which is a set of
  * toggles, and announcing them as tabs would promise a navigation that never
  * happens.
+ *
+ * ── WHY THIS SURVIVED W3.1's RANGE-PICKER CONSOLIDATION ─────────────────────
+ *
+ * Round 2 made `components/dashboard/RangePicker` the console's window control
+ * — four presets (7d/30d/90d/12m) plus a custom calendar — and W2.2 moved
+ * `/admin/telemetry` onto it, so an operator does not learn two window controls
+ * on the same dashboard. W3.1 kept the remaining TWO call sites, deliberately,
+ * because each needs a window the console's vocabulary cannot express:
+ *
+ *   • `/admin/telemetry/events` needs **"All time"**. The feed's job is "find
+ *     the event I am looking for", and the console has no un-windowed preset —
+ *     a hidden default is how "I cannot find last month's login" becomes a
+ *     support ticket. See that page's own header.
+ *   • `/admin/telemetry/requests` needs **24h**. That page exists for the
+ *     hour/day bucket toggle beside it (see its header), and the shortest
+ *     console preset is 7d — a week of hourly marks is a comb, so the one
+ *     window the page is FOR would be unreachable.
+ *
+ * Both are windows this control has and the console's does not, which is the
+ * only reason a second range vocabulary is allowed to exist. Anything that
+ * wants 7d/30d/90d/12m uses `dashboard/RangePicker`.
  */
 export function TelemetryRangePicker({
   value,

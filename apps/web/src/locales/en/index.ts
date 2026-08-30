@@ -12,8 +12,16 @@
  * Wave 3 view agents each add their own namespace here (`board`, `backlog`,
  * `roadmap`, `table`, `calendar`, `reports`) — this file and its Arabic twin
  * are stitch files, owned by the wave's integration package.
+ *
+ * ── ROUND 2 FREEZE ──────────────────────────────────────────────────────────
+ * This aggregator and its twin are STITCH FILES. W1.0 registered every
+ * namespace Round 2 needs — `analytics`, new and still a title-only stub — and
+ * W3.1 is the only package allowed to edit them again. W2.1 (`admin`), W2.2
+ * (`analytics`), W2.3 (`theme`) and W1.3 (`common`) each fill in THEIR OWN
+ * namespace file; none of them adds, moves or renames a line here.
  */
 import admin from './admin';
+import analytics from './analytics';
 import auth from './auth';
 import backlog from './backlog';
 import board from './board';
@@ -56,4 +64,6 @@ export default {
   admin,
   diagnostics,
   palette,
+  // Round 2 — the admin analytics console (W2.2 fills this namespace).
+  analytics,
 } as const;

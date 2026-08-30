@@ -9,7 +9,7 @@
 //
 // Runtime-neutral: zod only, no DOM/Node globals.
 import { z } from 'zod';
-import { isoDateTime, slugSchema, uuid } from './common';
+import { booleanQuery, isoDateTime, slugSchema, uuid } from './common';
 import { projectRoleSchema } from './projects.schema';
 import { emailSchema, nameSchema, userSummarySchema } from './users.schema';
 import {
@@ -46,6 +46,63 @@ export const orgWithRoleSchema = orgSchema.extend({
   projectCount: z.number().int().nonnegative(),
 });
 export type OrgWithRole = z.infer<typeof orgWithRoleSchema>;
+
+/**
+ * Whose organizations a `GET /orgs` call is asking about.
+ *
+ * There is exactly ONE option, and that is the point: omitted, the endpoint
+ * answers "the orgs you can see", which for a global admin is every org in the
+ * deployment. `scope=member` narrows it to "the orgs you are actually a member
+ * of" — the server half of view-as-member, so an admin who has switched into a
+ * member's view sees the same switcher a member would, not a filtered copy of
+ * the admin list. Client-side filtering would be a lie the moment a page
+ * refetched.
+ *
+ * An enum rather than a boolean because `scope=member` is one value of a
+ * question ("whose?"), and the next answer — `scope=org-admin`, say — must be
+ * addable without inverting a flag.
+ */
+export const orgListScopeSchema = z.enum(['member']);
+export type OrgListScope = z.infer<typeof orgListScopeSchema>;
+
+/**
+ * `GET /orgs?q=&scope=&includeDeleted=` — the switcher's search, the view-as
+ * narrowing, and the admin Organizations page's archived toggle, on one
+ * endpoint.
+ *
+ * `q` matters past roughly twenty organizations, where the combobox stops being
+ * able to render the whole list and starts asking the server. `includeDeleted`
+ * is GLOBAL-ADMIN ONLY — soft-deleted orgs are what the restore flow acts on,
+ * and a member must never be able to enumerate them; the service enforces that,
+ * because a schema cannot know who is asking.
+ */
+export const orgListQuerySchema = z.object({
+  q: z.string().trim().max(120).optional(),
+  scope: orgListScopeSchema.optional(),
+  includeDeleted: booleanQuery.optional(),
+});
+export type OrgListQuery = z.infer<typeof orgListQuerySchema>;
+
+/**
+ * A row of the ADMIN organizations table (`GET /orgs?includeDeleted=1` under a
+ * global admin).
+ *
+ * Extends {@link orgSchema} rather than {@link orgWithRoleSchema} on purpose: a
+ * global admin administers organizations they are not a member of, so `role`
+ * has no honest value here — carrying a synthetic `'admin'` would make the
+ * client's permission checks agree with a fiction.
+ *
+ * `deletedAt` is the whole reason this shape exists. The table shows archived
+ * organizations behind a toggle so they can be RESTORED, which means the row
+ * has to say whether it is archived and when — a list that silently omitted
+ * them would leave restore with nothing to act on.
+ */
+export const orgAdminRowSchema = orgSchema.extend({
+  deletedAt: isoDateTime.nullable(),
+  memberCount: z.number().int().nonnegative(),
+  projectCount: z.number().int().nonnegative(),
+});
+export type OrgAdminRow = z.infer<typeof orgAdminRowSchema>;
 
 /**
  * `GET /orgs/:orgId`, `POST /orgs`, `PATCH /orgs/:orgId` — one org, read on its

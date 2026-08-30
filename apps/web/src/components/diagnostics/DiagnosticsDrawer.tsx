@@ -70,6 +70,22 @@ import {
  * keeps its browser meaning for everyone else. That is presentation only: the
  * server enforces `requireGlobalAdmin` on `/api/admin/logs` regardless, which
  * is the boundary that actually matters — log lines carry user emails and ids.
+ *
+ * ── …and it is the EFFECTIVE flag (R2 W3.5) ─────────────────────────────────
+ * The gate reads `isEffectiveGlobalAdmin()` — the real flag AND `!viewingAsMember`
+ * — because this drawer is CHROME, and admin.md §4.1's rule for chrome is that
+ * every surface reads the effective flag while only the switch itself reads the
+ * real one. It used to read the real flag, so an admin previewing member view
+ * still had a topbar button no member has, still had Ctrl+J bound (taking it
+ * away from the browser), and still had a live server-log tail docked beside a
+ * board they were pretending to be a member of — which is precisely the thing
+ * the preview exists to make impossible to see.
+ *
+ * The LADDER is unchanged: the session response when it has arrived, the
+ * persisted flag while it is in flight, so the drawer does not blink out of
+ * existence on every reload for the admin who lives in it. `viewingAsMember`
+ * comes from the store either way, because it is a local posture and never part
+ * of the session payload.
  */
 
 /** The lucide glyph for each dock — the cycle button shows the CURRENT one. */
@@ -88,7 +104,11 @@ export default function DiagnosticsDrawer() {
   // blink out of existence on every reload for the admin who lives in it.
   const me = useMe().data;
   const storedFlag = useAuthStore((state) => state.isGlobalAdmin());
-  const isGlobalAdmin = me ? me.isGlobalAdmin : storedFlag;
+  const viewingAsMember = useAuthStore((state) => state.viewingAsMember);
+  const realAdmin = me ? me.isGlobalAdmin : storedFlag;
+  // The EFFECTIVE flag — see the header. Everything below (the topbar slot, the
+  // two chords, the panel itself) hangs off this one value.
+  const isGlobalAdmin = realAdmin && !viewingAsMember;
 
   const diagOpen = useLayoutStore((state) => state.diagOpen);
   const diagHeight = useLayoutStore((state) => state.diagHeight);

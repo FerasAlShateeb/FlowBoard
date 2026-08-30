@@ -73,6 +73,16 @@ claim about a review that has already ended.
       [../docs/i18n.md](../docs/i18n.md) §5.3; a new one needs a row there.
 - [ ] Numbers render as Western digits in Arabic, formatted through `lib/format.ts` — never hand-concatenated.
 - [ ] A form does not translate its own field errors; shared zod messages are translated once in `FormMessage`.
+- [ ] **Shared chrome does not call `t()` at a call site.** A string rendered by
+      `components/dashboard/**` comes from `chrome-copy.ts`, and any **new borrow
+      from another namespace has a row in that file's KEPT/MINTED table with a
+      reason**. A borrow whose source key names a different thing that merely
+      reads the same today should be minted into `common:grid.*` instead — that
+      is the mistake the W3.1 review found three times.
+- [ ] A config module that stores an i18n key stores a **typed literal**
+      (`NavLabelKey`, `AnalyticsKey`, `labelKey`) and resolves it at the render
+      site — never `t()` at module scope
+      ([../docs/i18n.md](../docs/i18n.md) §2.5, §11.1).
 
 ## 6. Tokens and design
 
@@ -84,6 +94,25 @@ claim about a review that has already ended.
 - [ ] Focus-visible styling present; keyboard path works; overlays trap and restore focus.
 - [ ] New global chords are registered through `lib/shortcuts.ts` — not a loose `keydown` listener — so the `?` cheat sheet stays truthful.
 - [ ] Every failed mutation surfaces a toast.
+- [ ] **Anything that moves is either a `--speed` transition or a registry
+      entry.** A new animation needs a row in `lib/motion-registry.ts` with all
+      three answers filled in — what CSS could not express, how it is driven, and
+      **what the reduced branch renders** — and a `motion` import needs its file
+      in `MOTION_LIBRARY_FILES`. The reduced branch must keep the same copy,
+      affordances and `data-testid`. Prefer a `data-motion`-gated keyframe in
+      `index.css` §B, which enforces itself, over the library
+      ([../docs/motion.md](../docs/motion.md) §4, §7).
+- [ ] **A range control uses the vocabulary that answers its question.**
+      `7d/30d/90d/12m` → `components/dashboard/RangePicker`; sprints →
+      `reports/ReportRangePicker`; 24 h or "All time" →
+      `admin/TelemetryRangePicker`. A fourth picker, or a fourth preset list, is
+      a finding ([../docs/design-system.md](../docs/design-system.md) §10.3).
+- [ ] The right card: `ReportCard` for a grid of same-shaped chart tiles,
+      `PanelCard` for a page of differently-shaped panels — and a `PanelCard`
+      states a skeleton that reserves the height its content will take
+      (design-system.md §10.2).
+- [ ] A new grid's filters, sort and paging round-trip through
+      `useGridUrlState`; column visibility, order and density stay in memory.
 
 ## 7. Data correctness
 

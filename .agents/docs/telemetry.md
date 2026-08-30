@@ -2,9 +2,18 @@
 
 FlowBoard measures itself. No third-party analytics SDK ships in either bundle:
 two append-only Postgres tables — `telemetry_events` (semantic product events)
-and `request_logs` (one row per finished HTTP request) — feed four admin
-dashboards. Read this before you emit an event, add a `record()` call, touch the
-request-log middleware, or build a chart on `/api/admin/telemetry/*`.
+and `request_logs` (one row per finished HTTP request) — feed every admin
+dashboard in the product. Read this before you emit an event, add a `record()`
+call, touch the request-log middleware, or build a chart on
+`/api/admin/telemetry/*`.
+
+**Two endpoint families read these tables, and the split is by question, not by
+data.** `/api/admin/telemetry/*` — this document — answers "what exactly
+happened, and is the server healthy right now?": the raw event feed, requests
+over time, latency, top endpoints. `/api/admin/analytics/*` answers "how is the
+product doing over a window?" and is [analytics.md](./analytics.md). Emission,
+the closed event enum, the ingest contract and the aggregation math below are
+shared by both; **the analytics console added no event type and no column.**
 
 The realtime counterpart is [realtime.md](./realtime.md); the pino ring buffer
 behind `/api/admin/logs` is a different system entirely and lives in
@@ -336,6 +345,28 @@ and `generate_series` would happily materialise it first and let the failure be 
 timeout. Refusing with a 400 beats silently coarsening the bucket: a chart
 labelled "per minute" that is secretly hourly is a lie.
 
+### 6.1 The analytics family, and what it does not duplicate
+
+`/api/admin/analytics/{overview,engagement,work,traffic,growth}` reads the same
+two tables (plus `users`, `organizations`, `projects`, `tasks` and `invites`)
+behind the same `requireAuth, requireGlobalAdmin` router guard. Three properties
+keep the two families from drifting into each other:
+
+- **The five telemetry endpoints were not replaced.** They still own the event
+  feed and the ops charts, and `/admin/telemetry*` still renders them.
+- **The math is the same math.** `generate_series` spine, half-open bucket
+  bounds, `percentile_cont`, an `errorRate` that counts 5xx only, one round trip
+  per endpoint (§7). A new aggregation that disagrees with §7 is a bug on
+  whichever side it lives.
+- **The bucket ceilings differ on purpose.** `MAX_BUCKETS` is **1 500** here and
+  **400** in the analytics service: an ops chart draws a week of minutes, while
+  a console plot targets 10–100 points and coarsens its interval to stay there.
+
+The one figure the two surfaces define differently is **cycle time**, and it is
+documented rather than reconciled — the console measures `resolved_at −
+created_at`, the per-project reports dashboard starts the clock at the first
+`in_progress` transition. Cite which surface a number came from.
+
 `?sort` on `/events` is restricted by `sortQueryFor(TELEMETRY_EVENT_SORT_FIELDS)`
 to `createdAt` and `type` — the two columns with an index behind them, which is
 what keeps `?sort=payload` from reaching the query builder. It is left
@@ -529,11 +560,33 @@ control that silently undoes itself is worse than no control.
 
 ### 8.3 Pages and charts
 
-| Page                             | Route                       | What it holds                                                                            |
-| -------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `AdminTelemetryPage.tsx`         | `/admin/telemetry`          | KPI row + requests + latency + top endpoints (limit 10). One piece of state: the preset. |
-| `AdminTelemetryRequestsPage.tsx` | `/admin/telemetry/requests` | The same three panels plus the hour/day toggle; `ENDPOINT_LIMIT = 20`.                   |
-| `AdminTelemetryEventsPage.tsx`   | `/admin/telemetry/events`   | The paginated raw feed. `DEFAULT_PAGE_SIZE = 25`, preset defaults to `'all'`.            |
+| Page                             | Route                       | What it holds                                                                       |
+| -------------------------------- | --------------------------- | ----------------------------------------------------------------------------------- |
+| `AdminTelemetryPage.tsx`         | `/admin/telemetry`          | The ops overview: KPI row + requests + latency + top endpoints (limit 10).          |
+| `AdminTelemetryRequestsPage.tsx` | `/admin/telemetry/requests` | The same three panels plus the hour/day toggle; `ENDPOINT_LIMIT = 20`.              |
+| `AdminTelemetryEventsPage.tsx`   | `/admin/telemetry/events`   | The raw feed on the generic `DataTable` — facets, sortable headers, URL state, CSV. |
+
+Round 2 rebuilt the chrome of all three without changing a query:
+
+- **The panels moved from `ReportCard` onto `PanelCard`**, so the two
+  side-by-side plots now state their own height through `OPS_CHART_BODY` in
+  `apps/web/src/components/admin/ops-panel.ts` rather than inheriting a pinned
+  16:10 aspect. Two callers stating a height separately is how a pair of
+  side-by-side plots drifts apart — see [design-system.md](./design-system.md)
+  §10.2 and §10.7.
+- **The events feed runs on the generic grid** (`components/dashboard/DataTable`
+  - `hooks/useGridUrlState`), so a filtered feed is a link somebody can paste
+    into an incident channel, and its CSV is the query rather than the page.
+- **Both range pickers stayed, deliberately.** `/admin/telemetry/requests` needs
+  24 h and the feed needs **All time**, neither of which the console's
+  `7d/30d/90d/12m` vocabulary can express, so
+  `components/admin/TelemetryRangePicker.tsx` survived the migration onto
+  `components/dashboard/RangePicker` (design-system.md §10.3).
+- **One rough edge is open:** the feed's Project column renders `row.projectId`
+  as a raw UUID while the adjacent User column is a clickable name. Fixing it
+  needs a project name or key denormalized onto `telemetryEventRowSchema` — an
+  API contract change, not a render change. It has an unticked row in
+  [project-checklist.md](../checklists/project-checklist.md) §G.
 
 - **The KPI row ignores the window, on purpose.** `/overview` takes no range, so
   two people quoting DAU mean the same thing. A range-tunable headline number is
@@ -576,5 +629,16 @@ propagates them:
   answers a question someone actually asks of the admin dashboard, and an event
   nobody charts is just write amplification". There is no `task_deleted`, no
   `project_created`, no `member_invited`.
+
+## Related docs
+
+- [analytics.md](./analytics.md) — the other reader of these two tables: the
+  metric registry, the five domain endpoints, and the events-vs-analytics split.
+- [admin.md](./admin.md) — the console shell both families live in.
+- [diagnostics.md](./diagnostics.md) — the pino ring buffer, a different system
+  entirely.
+- [design-system.md](./design-system.md) — `PanelCard`, `OPS_CHART_BODY`, and the
+  three range vocabularies.
+- [architecture.md](./architecture.md) — `bootstrap()` and the injected sinks.
 
 Back to [docs/INDEX.md](./INDEX.md) · [.agents/INDEX.md](../INDEX.md)

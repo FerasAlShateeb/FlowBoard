@@ -28,12 +28,17 @@ quartet nearest to what you are changing before writing anything.
 5. [../docs/auth.md](../docs/auth.md) — JWT, `tokenVersion`, the `AuthProvider` interface, the role matrix.
 6. [../docs/realtime.md](../docs/realtime.md) — **when touching sockets**: the event map, rooms, echo suppression, the bridge's parse-before-emit.
 7. [../docs/telemetry.md](../docs/telemetry.md) + [../docs/diagnostics.md](../docs/diagnostics.md) — `record()`, the request-log pipeline, the log ring.
-8. [../docs/testing.md](../docs/testing.md) — the supertest contract and the fixture catalogue.
-9. The workflow for what you are doing, **every time**:
-   [add-api-endpoint.md](../workflows/add-api-endpoint.md) ·
-   [db-migration.md](../workflows/db-migration.md) ·
-   [add-socket-event.md](../workflows/add-socket-event.md) ·
-   [add-notification-trigger.md](../workflows/add-notification-trigger.md).
+8. **When touching anything above the org boundary**:
+   [../docs/admin.md](../docs/admin.md) — the `instance_settings` singleton, the
+   instance-admin guards, `?scope=member`, and anonymize-delete — and
+   [../docs/analytics.md](../docs/analytics.md) §2 for the domain endpoints.
+9. [../docs/testing.md](../docs/testing.md) — the supertest contract and the fixture catalogue.
+10. The workflow for what you are doing, **every time**:
+    [add-api-endpoint.md](../workflows/add-api-endpoint.md) ·
+    [db-migration.md](../workflows/db-migration.md) ·
+    [add-socket-event.md](../workflows/add-socket-event.md) ·
+    [add-notification-trigger.md](../workflows/add-notification-trigger.md) ·
+    [add-analytics-metric.md](../workflows/add-analytics-metric.md).
 
 ## File ownership
 

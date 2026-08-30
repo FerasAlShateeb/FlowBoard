@@ -22,6 +22,12 @@
  * differently — two cache entries for one screen. {@link filtersKey} sorts the
  * entries before serialising, so the board's key is stable no matter how the
  * filter bar built its object.
+ *
+ * ── ROUND 2 FREEZE ──────────────────────────────────────────────────────────
+ * This factory is a STITCH FILE. W1.0 added every key Round 2 needs
+ * (`instance`, `adminOrgs`, `adminProjects`, `analytics`) up front, and W3.1 is
+ * the only package allowed to edit it again. W1.1–W1.5 and W2.1–W2.4 CALL these
+ * factories from their hooks; they do not add, move or rename one here.
  */
 
 /** Anything a filter value can be. Mirrors `lib/api`'s `QueryValue`. */
@@ -283,5 +289,67 @@ export const qk = {
     telemetryRequests: (range: string) => ['admin', 'telemetry', 'requests', range] as const,
     telemetryEndpoints: (range: string) => ['admin', 'telemetry', 'endpoints', range] as const,
     telemetryLatency: (range: string) => ['admin', 'telemetry', 'latency', range] as const,
+  },
+
+  /**
+   * The deployment's own configuration.
+   *
+   * TOP-LEVEL, and deliberately NOT under `admin`: `config()` is read by every
+   * signed-in session on boot (it decides whether the shell renders an org
+   * switcher at all), so it must survive the cache drop that follows an admin
+   * losing their flag. `settings()` is the admin-only editable row behind it and
+   * shares the prefix because a successful `PATCH` has to invalidate BOTH — the
+   * whole point of changing the mode is that the shell relays itself out.
+   */
+  instance: {
+    all: () => ['instance'] as const,
+    config: () => ['instance', 'config'] as const,
+    settings: () => ['instance', 'settings'] as const,
+  },
+
+  /**
+   * The admin ORGANIZATIONS console — every org in the deployment, archived
+   * ones included, which is a different question from `qk.orgs.mine()` (the
+   * switcher's list of the orgs the caller belongs to). Two questions, two
+   * cache entries: restoring an archived org must not be able to leave the
+   * switcher showing a stale list, and a member's switcher must never be
+   * hydrated from an admin table.
+   *
+   * Nested under the `['admin']` prefix so signing out of the admin role — or
+   * switching into view-as-member — drops it with everything else admin.
+   */
+  adminOrgs: {
+    all: () => ['admin', 'orgs'] as const,
+    list: (filters?: Record<string, FilterValue>, page?: PageParams) =>
+      ['admin', 'orgs', 'list', filtersKey(filters), pageKey(page)] as const,
+    detail: (orgId: string) => ['admin', 'orgs', orgId] as const,
+  },
+
+  /** The cross-org projects overview (`GET /admin/projects`). */
+  adminProjects: {
+    all: () => ['admin', 'projects'] as const,
+    list: (filters?: Record<string, FilterValue>, page?: PageParams) =>
+      ['admin', 'projects', 'list', filtersKey(filters), pageKey(page)] as const,
+  },
+
+  /**
+   * The analytics console. ONE ENTRY PER DOMAIN PER RANGE, because that is
+   * exactly what the API serves — a domain is one round trip, so it is one
+   * cache entry, and every chart on the page reads a slice of it.
+   *
+   * `rangeKey` is a caller-built string (a preset name like `30d`, or
+   * `from..to` for a custom window), the same idiom `qk.reports.*` uses. It is
+   * PART OF THE KEY rather than a filter on the payload because these queries
+   * are expensive and a range change genuinely fetches different rows — and
+   * because keying by preset is what lets `useAnalyticsStore` keep a warm copy
+   * of the previous range on screen while the new one loads.
+   *
+   * `domain` is a plain string so this module stays dependency-free (it imports
+   * nothing, by design); the typed `AnalyticsDomain` lives at the call sites,
+   * plus the literal `'overview'` the admin landing page reads.
+   */
+  analytics: {
+    all: () => ['admin', 'analytics'] as const,
+    domain: (domain: string, rangeKey: string) => ['admin', 'analytics', domain, rangeKey] as const,
   },
 } as const;

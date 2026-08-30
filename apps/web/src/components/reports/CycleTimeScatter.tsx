@@ -22,7 +22,16 @@ import ChartLegend from './ChartLegend';
 import ReportCard from './ReportCard';
 import type { DateRange } from './report-range';
 import { useChartFormat } from './chart-format';
-import { AXIS_TICK, CHART_CHROME, CHART_SERIES, DASH, PLOT_MARGIN, STROKE } from './chart-theme';
+import {
+  AXIS_TICK,
+  CHART_CHROME,
+  CHART_SERIES,
+  chartAnimation,
+  DASH,
+  PLOT_MARGIN,
+  STROKE,
+  useColdChart,
+} from './chart-theme';
 import { cycleTimeHeadline } from './report-summaries';
 
 /**
@@ -93,6 +102,9 @@ export function CycleTimeScatter({
 }) {
   const { t } = useTranslation(['reports']);
   const format = useChartFormat();
+  // Registry entry #6: a COLD load draws itself in, a warm refetch does not,
+  // and Reduced motion never does. One call, spread onto every series below.
+  const animation = chartAnimation(useColdChart());
   const rows = useMemo(() => toScatterRows(report.tasks), [report.tasks]);
   const headline = cycleTimeHeadline(report);
 
@@ -178,7 +190,7 @@ export function CycleTimeScatter({
             fillOpacity={0.75}
             onClick={handleClick}
             style={onSelectTask ? { cursor: 'pointer' } : undefined}
-            isAnimationActive={false}
+            {...animation}
           />
         </ScatterChart>
       </ResponsiveContainer>

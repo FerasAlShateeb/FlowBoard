@@ -100,11 +100,25 @@ test('the telemetry pages draw, and the events feed shows this session', async (
   // fortnight with a recency bias, so 24 hours is not by itself proof — the
   // `from`-windowed API assertion above is. This is the UI half: the feed can
   // render what the API returned.
+  //
+  // ── ROUND 2 RESHAPED THIS HALF OF THE TEST (W3.1) ─────────────────────────
+  // The feed's bespoke `TelemetryFilters` single-select ("All events" in a
+  // combobox) is gone; the page is a generic `DataTable` now and the event type
+  // is a MULTI-select facet, because the endpoint always accepted a
+  // comma-separated list and the old control could only ask for one. The
+  // assertion is unchanged — narrow to `page_view`, still get rows — but it now
+  // goes through `table-facet-type*`, the facet kit's own testids, rather than
+  // through role+text on a control that no longer exists.
+  //
+  // The range picker keeps its testid AND gains an "All time" chip (the page's
+  // default), so "Last 24 hours" is still a real narrowing rather than a no-op.
   await page
     .getByTestId('telemetry-range-picker')
     .getByRole('button', { name: 'Last 24 hours' })
     .click();
-  await page.getByRole('combobox').filter({ hasText: 'All events' }).first().click();
-  await page.getByRole('option', { name: 'Page view' }).click();
+  await page.getByTestId('table-facet-type').click();
+  await page.getByTestId('table-facet-type-page_view').click();
+  // The facet is a popover over the grid; close it so the rows are unobscured.
+  await page.keyboard.press('Escape');
   await expect.poll(async () => rows.count()).toBeGreaterThan(0);
 });

@@ -15,6 +15,12 @@ import { adminUsersQueryOptions, generateTempPassword } from '@/hooks/useAdminUs
  * real `QueryClient` covers the key, the URL and the parse with no DOM.
  */
 
+/**
+ * A LIST ROW, not a bare account: `GET /admin/users` answers
+ * `adminUserRowSchema`, which is `userSchema` plus the denormalized
+ * `memberships[]` the directory's organizations column renders. A fixture
+ * without it is a fixture the boundary parse rejects — which is the point.
+ */
 const USER = {
   id: '44444444-4444-4444-8444-444444444444',
   email: 'ada@flowboard.dev',
@@ -24,6 +30,14 @@ const USER = {
   locale: 'en',
   isActive: true,
   createdAt: '2026-01-01T00:00:00.000Z',
+  memberships: [
+    {
+      orgId: '11111111-1111-4111-8111-111111111111',
+      orgName: 'Acme',
+      orgSlug: 'acme',
+      role: 'admin',
+    },
+  ],
 };
 
 const META = { page: 1, pageSize: 25, total: 1, totalPages: 1 };
@@ -70,6 +84,37 @@ describe('adminUsersQueryOptions', () => {
     // `isActive` is required by `userSchema`; a server that stopped sending it
     // must fail here rather than render a table of half-defined toggles.
     fetchMock.mockResolvedValue(ok([{ ...USER, isActive: undefined }], META));
+
+    await expect(
+      client().fetchQuery(adminUsersQueryOptions({}, { page: 1, pageSize: 25 })),
+    ).rejects.toThrow();
+  });
+
+  /**
+   * The memberships column reads `row.memberships`, and zod objects STRIP
+   * unknown keys — so parsing with the narrower `userSchema` would silently
+   * hand the table an undefined field rather than failing. This asserts the
+   * wider schema is the one in force.
+   */
+  it('keeps the memberships the admin row carries', async () => {
+    fetchMock.mockResolvedValue(ok([USER], META));
+
+    const page = await client().fetchQuery(adminUsersQueryOptions({}, { page: 1, pageSize: 25 }));
+
+    expect(page.rows[0]?.memberships).toEqual([
+      {
+        orgId: '11111111-1111-4111-8111-111111111111',
+        orgName: 'Acme',
+        orgSlug: 'acme',
+        role: 'admin',
+      },
+    ]);
+  });
+
+  it('rejects a membership row missing its denormalized org name', async () => {
+    fetchMock.mockResolvedValue(
+      ok([{ ...USER, memberships: [{ orgId: USER.id, orgSlug: 'acme', role: 'admin' }] }], META),
+    );
 
     await expect(
       client().fetchQuery(adminUsersQueryOptions({}, { page: 1, pageSize: 25 })),

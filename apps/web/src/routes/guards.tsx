@@ -1,13 +1,15 @@
 import { useEffect } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ShieldAlert } from 'lucide-react';
+import { Eye, ShieldAlert } from 'lucide-react';
 
 import { useAuthStore } from '@/stores/useAuthStore';
 import { endSessionLocally, useMe } from '@/hooks/useAuth';
 import { resolveAuthGate, returnToPath } from '@/routes/auth-gate';
+import { useViewAsSwitch } from '@/components/layout/ViewAsPill';
 import EmptyState from '@/components/common/EmptyState';
 import PageSpinner from '@/components/common/PageSpinner';
+import { Button } from '@/components/ui/button';
 
 /**
  * Route guards, mounted as ELEMENTS rather than wrapped around each page — so
@@ -74,10 +76,26 @@ export function RequireAuth() {
  * This is CHROME, not a security boundary. Every admin endpoint re-checks the
  * claim server-side (`requireGlobalAdmin`), so a tampered store buys an
  * attacker a page full of failed requests and nothing else.
+ *
+ * ═══ IT GATES ON THE *EFFECTIVE* FLAG (Round 2) ════════════════════════════
+ *
+ * An admin previewing the product as a member must be refused here too — a
+ * preview in which `/admin/users` still renders is not a preview. But the two
+ * refusals are DIFFERENT SITUATIONS and must not share a message: "you need
+ * administrator access" is a lie told to an administrator, and the reader's
+ * next action is not "ask someone for access", it is "turn the preview off".
+ * So member view gets its own state, with the switch in it.
+ *
+ * The BOUNCE off `/admin/*` lives in the toggle handler (see
+ * `components/navigation/view-as.ts`), not here. This branch is what catches
+ * the leftovers — a bookmark, a deep link, a back button — where there was no
+ * transition for the toggle to react to.
  */
 export function RequireGlobalAdmin() {
-  const { t } = useTranslation(['auth']);
+  const { t } = useTranslation(['auth', 'common']);
   const storedFlag = useAuthStore((state) => state.isGlobalAdmin());
+  const viewingAsMember = useAuthStore((state) => state.viewingAsMember);
+  const { switchView } = useViewAsSwitch();
   const { data: me, isPending } = useMe();
 
   const isGlobalAdmin = me ? me.isGlobalAdmin : storedFlag;
@@ -86,6 +104,27 @@ export function RequireGlobalAdmin() {
   // and then revealing the page would be worse than a brief spinner, while an
   // admin whose stored flag already says "yes" should never see one at all.
   if (!isGlobalAdmin && isPending) return <PageSpinner />;
+
+  if (isGlobalAdmin && viewingAsMember) {
+    return (
+      <EmptyState
+        icon={<Eye className="size-4" />}
+        title={t('common:nav.viewingAsMember')}
+        message={t('common:nav.viewAsBlockedBody')}
+        action={
+          <Button
+            size="sm"
+            data-testid="view-as-exit"
+            onClick={() => {
+              switchView(false);
+            }}
+          >
+            {t('common:nav.backToAdminView')}
+          </Button>
+        }
+      />
+    );
+  }
 
   if (!isGlobalAdmin) {
     return (

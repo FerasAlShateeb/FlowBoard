@@ -1,26 +1,14 @@
-import {
-  Activity,
-  Bell,
-  Building2,
-  CalendarDays,
-  ChartGantt,
-  CircleUser,
-  LayoutDashboard,
-  ListOrdered,
-  Palette,
-  Plus,
-  Settings,
-  ShieldCheck,
-  SquareKanban,
-  Table2,
-  Terminal,
-  Users,
-  type LucideIcon,
-} from 'lucide-react';
+import { Palette, Plus, Terminal, type LucideIcon } from 'lucide-react';
 import { matchPath } from 'react-router-dom';
 import type { SearchResult } from '@flowboard/shared';
 
-import { orgPath, projectPath, type RouteScope } from '@/hooks/useRouteScope';
+import { projectPath, type RouteScope } from '@/hooks/useRouteScope';
+import {
+  buildSections,
+  flattenNav,
+  type NavLabelKey,
+  type NavSection,
+} from '@/components/navigation/nav.config';
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -85,26 +73,21 @@ export type PaletteAction =
   /** Open WP3.2's `TaskCreateDialog` for the project in scope. */
   | { kind: 'create-task' }
   /** Flip `useLayoutStore.diagOpen` — WP4.4's drawer. */
-  | { kind: 'diagnostics' };
+  | { kind: 'diagnostics' }
+  /** Flip `useLayoutStore.themeStudioOpen` — W2.3's Theme Studio drawer. */
+  | { kind: 'theme-studio' };
 
-/** Every label key the navigation lane can emit. Checked against the catalog. */
+/**
+ * Every label key the navigation lane can emit. Checked against the catalog.
+ *
+ * The navigation half is exactly `NavLabelKey` — the palette does not get to
+ * name a destination the sidebar has not heard of. Only the two VERBS are the
+ * palette's own, and they are the only rows here that are not a route.
+ */
 export type PaletteLabelKey =
-  | 'common:nav.board'
-  | 'common:nav.backlog'
-  | 'common:nav.roadmap'
-  | 'common:nav.table'
-  | 'common:nav.calendar'
-  | 'common:nav.dashboard'
-  | 'common:nav.organization'
-  | 'common:nav.members'
-  | 'common:nav.teams'
-  | 'common:nav.orgSettings'
-  | 'common:nav.notifications'
-  | 'common:nav.profile'
-  | 'common:nav.theme'
-  | 'common:nav.adminUsers'
-  | 'common:nav.adminTelemetry'
+  | NavLabelKey
   | 'palette:actions.createTask'
+  | 'palette:actions.openThemeStudio'
   | 'palette:actions.openDiagnostics';
 
 export type PaletteSectionKey =
@@ -149,151 +132,90 @@ export interface RankedPaletteItem extends LocalizedPaletteItem {
   matched: readonly number[];
 }
 
-/** Everything the builder needs to decide what exists. */
+/**
+ * Everything the builder needs to decide what exists.
+ *
+ * `effectiveAdmin`, not `isGlobalAdmin`: an admin previewing the product as a
+ * member must not find the admin console through Ctrl+K either.
+ *
+ * The two FALLBACK slugs are the palette's half of the admin-trap fix. The org
+ * rows used to be gated on `orgSlug` alone, so hitting Ctrl+K on `/admin/users`
+ * — a route with no org in it — offered no way into any organization at all.
+ * They now resolve through the same ladder the sidebar uses; both default to
+ * null so a caller that has neither still type-checks and simply gets the old
+ * behaviour.
+ */
 export interface PaletteContext {
   /** From `/o/:orgSlug/…`, or null outside any org. */
   orgSlug: string | null;
   /** From `/o/:orgSlug/p/:projectKey/…`, or null outside a project. */
   projectKey: string | null;
-  isGlobalAdmin: boolean;
+  effectiveAdmin: boolean;
+  /** `fb-last-org-v1` — the org this device was last inside. */
+  lastOrgSlug?: string | null;
+  /** `instance_settings.defaultOrgSlug` — the single-org install's org. */
+  defaultOrgSlug?: string | null;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // The builder
 // ───────────────────────────────────────────────────────────────────────────
 
-/** The six project views, in sidebar order — one source for both surfaces. */
-const PROJECT_VIEWS: readonly {
-  id: string;
-  view: string;
-  labelKey: PaletteLabelKey;
-  icon: LucideIcon;
-}[] = [
-  { id: 'view-board', view: 'board', labelKey: 'common:nav.board', icon: SquareKanban },
-  { id: 'view-backlog', view: 'backlog', labelKey: 'common:nav.backlog', icon: ListOrdered },
-  { id: 'view-roadmap', view: 'roadmap', labelKey: 'common:nav.roadmap', icon: ChartGantt },
-  { id: 'view-table', view: 'table', labelKey: 'common:nav.table', icon: Table2 },
-  { id: 'view-calendar', view: 'calendar', labelKey: 'common:nav.calendar', icon: CalendarDays },
-  {
-    id: 'view-dashboard',
-    view: 'dashboard',
-    labelKey: 'common:nav.dashboard',
-    icon: LayoutDashboard,
-  },
-];
+/**
+ * Which palette heading a nav row lands under.
+ *
+ * The nav model groups by SIDEBAR shape — one "Workspace" section holding Home,
+ * the org pages and the personal pages, because that is one scannable column.
+ * The palette groups by KIND, because its rows are re-sorted by a fuzzy match
+ * and a heading is the only thing left saying what a row is. A rule rather than
+ * a per-id table, so a nav row added next wave lands somewhere sensible without
+ * this file being edited.
+ */
+function paletteSectionFor(sectionId: string, itemId: string): PaletteSectionKey {
+  if (sectionId === 'project') return 'palette:sections.project';
+  if (sectionId === 'admin' || sectionId === 'analytics') return 'palette:sections.admin';
+  return itemId.startsWith('org-') ? 'palette:sections.organization' : 'palette:sections.workspace';
+}
 
 /**
  * Every row the navigation lane offers, in the order they appear.
  *
- * ORDER IS THE KEYBOARD CONTRACT. The project views come first because inside a
- * project they are what someone hitting Ctrl+K almost always wants, and index 0
- * is what Enter takes on a palette nobody has typed into yet.
+ * ═══ THE ROWS ARE THE SIDEBAR'S ROWS ═══════════════════════════════════════
+ *
+ * Round 2 stopped this function from maintaining its own list of destinations
+ * and had it read `navigation/nav.config.ts` instead. The two lists had already
+ * drifted — the palette knew nothing about `/admin/overview`, `/admin/orgs` or
+ * any analytics page, and gated its org rows on the URL exactly the way the
+ * broken sidebar did, so Ctrl+K on `/admin/users` offered no route into an
+ * organization either. One model means a destination that exists is reachable
+ * from every surface, or from none.
+ *
+ * ORDER IS THE KEYBOARD CONTRACT. `buildSections` puts the project views first,
+ * which is what someone hitting Ctrl+K inside a project almost always wants,
+ * and index 0 is what Enter takes on a palette nobody has typed into yet. The
+ * two verbs are appended last because they are not places.
  */
 export function buildPaletteItems(context: PaletteContext): PaletteItem[] {
-  const { orgSlug, projectKey, isGlobalAdmin } = context;
-  const items: PaletteItem[] = [];
+  const { orgSlug, projectKey, effectiveAdmin } = context;
 
-  // ── Project views — only inside a project ────────────────────────────────
-  if (orgSlug !== null && projectKey !== null) {
-    for (const view of PROJECT_VIEWS) {
-      items.push({
-        id: view.id,
-        labelKey: view.labelKey,
-        sectionKey: 'palette:sections.project',
-        icon: view.icon,
-        action: { kind: 'navigate', to: projectPath(orgSlug, projectKey, view.view) },
-        keywords: [view.view, projectKey],
-      });
-    }
-  }
+  const sections: NavSection[] = buildSections({
+    orgSlug,
+    projectKey,
+    effectiveAdmin,
+    defaultOrgSlug: context.defaultOrgSlug ?? null,
+    lastOrgSlug: context.lastOrgSlug ?? null,
+  });
 
-  // ── Org pages — only inside an org ───────────────────────────────────────
-  if (orgSlug !== null) {
-    items.push(
-      {
-        id: 'org-home',
-        labelKey: 'common:nav.organization',
-        sectionKey: 'palette:sections.organization',
-        icon: Building2,
-        action: { kind: 'navigate', to: orgPath(orgSlug) },
-        keywords: ['projects', orgSlug],
-      },
-      {
-        id: 'org-members',
-        labelKey: 'common:nav.members',
-        sectionKey: 'palette:sections.organization',
-        icon: Users,
-        action: { kind: 'navigate', to: orgPath(orgSlug, 'members') },
-        keywords: ['members', 'people'],
-      },
-      {
-        id: 'org-teams',
-        labelKey: 'common:nav.teams',
-        sectionKey: 'palette:sections.organization',
-        icon: Users,
-        action: { kind: 'navigate', to: orgPath(orgSlug, 'teams') },
-        keywords: ['teams'],
-      },
-      {
-        id: 'org-settings',
-        labelKey: 'common:nav.orgSettings',
-        sectionKey: 'palette:sections.organization',
-        icon: Settings,
-        action: { kind: 'navigate', to: orgPath(orgSlug, 'settings') },
-        keywords: ['settings'],
-      },
-    );
-  }
-
-  // ── Personal pages — everywhere ──────────────────────────────────────────
-  items.push(
-    {
-      id: 'notifications',
-      labelKey: 'common:nav.notifications',
-      sectionKey: 'palette:sections.workspace',
-      icon: Bell,
-      action: { kind: 'navigate', to: '/notifications' },
-      keywords: ['notifications', 'inbox'],
-    },
-    {
-      id: 'profile',
-      labelKey: 'common:nav.profile',
-      sectionKey: 'palette:sections.workspace',
-      icon: CircleUser,
-      action: { kind: 'navigate', to: '/me' },
-      keywords: ['profile', 'account', 'me'],
-    },
-    {
-      id: 'theme',
-      labelKey: 'common:nav.theme',
-      sectionKey: 'palette:sections.workspace',
-      icon: Palette,
-      action: { kind: 'navigate', to: '/theme' },
-      keywords: ['theme', 'appearance'],
-    },
-  );
-
-  // ── Administration — chrome only; the API re-checks every one of these ───
-  if (isGlobalAdmin) {
-    items.push(
-      {
-        id: 'admin-users',
-        labelKey: 'common:nav.adminUsers',
-        sectionKey: 'palette:sections.admin',
-        icon: ShieldCheck,
-        action: { kind: 'navigate', to: '/admin/users' },
-        keywords: ['admin', 'users'],
-      },
-      {
-        id: 'admin-telemetry',
-        labelKey: 'common:nav.adminTelemetry',
-        sectionKey: 'palette:sections.admin',
-        icon: Activity,
-        action: { kind: 'navigate', to: '/admin/telemetry' },
-        keywords: ['admin', 'telemetry', 'analytics'],
-      },
-    );
-  }
+  const items: PaletteItem[] = flattenNav(sections)
+    .filter((item) => item.inPalette !== false)
+    .map((item) => ({
+      id: item.id,
+      labelKey: item.labelKey,
+      sectionKey: paletteSectionFor(sectionIdOf(sections, item.id), item.id),
+      icon: item.icon,
+      action: { kind: 'navigate', to: item.path },
+      keywords: item.keywords ?? [],
+    }));
 
   // ── Verbs ────────────────────────────────────────────────────────────────
   items.push({
@@ -303,11 +225,26 @@ export function buildPaletteItems(context: PaletteContext): PaletteItem[] {
     icon: Plus,
     action: { kind: 'create-task' },
     keywords: ['new', 'task', 'issue', 'create'],
-    // Always present, unreachable without somewhere to put the task.
+    // Always present, unreachable without somewhere to put the task. A project
+    // view can be reached from a remembered org; a task cannot be CREATED in
+    // one, because "create it where?" has no remembered answer.
     disabled: projectKey === null,
   });
 
-  if (isGlobalAdmin) {
+  // The Theme Studio drawer. Never gated: appearance is every user's setting,
+  // and this is the third door onto the same drawer (the topbar's palette icon
+  // and `mod+shift+t` are the other two) precisely because the drawer has no
+  // route of its own to reach through the navigation lane.
+  items.push({
+    id: 'action-theme-studio',
+    labelKey: 'palette:actions.openThemeStudio',
+    sectionKey: 'palette:sections.actions',
+    icon: Palette,
+    action: { kind: 'theme-studio' },
+    keywords: ['theme', 'appearance', 'colors', 'colours', 'dark', 'studio'],
+  });
+
+  if (effectiveAdmin) {
     items.push({
       id: 'action-diagnostics',
       labelKey: 'palette:actions.openDiagnostics',
@@ -319,6 +256,11 @@ export function buildPaletteItems(context: PaletteContext): PaletteItem[] {
   }
 
   return items;
+}
+
+/** The id of the section a nav item came from. */
+function sectionIdOf(sections: readonly NavSection[], itemId: string): string {
+  return sections.find((section) => section.items.some((item) => item.id === itemId))?.id ?? '';
 }
 
 /** Resolves each row's two strings. Kept separate so the builder stays pure. */

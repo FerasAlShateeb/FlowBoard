@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { VIEW_MODE_STORAGE_KEY } from '@/components/navigation/view-as';
 import { AUTH_STORAGE_KEY, useAuthStore, type AuthUser } from '@/stores/useAuthStore';
 
 /**
@@ -30,13 +31,17 @@ const USER: AuthUser = {
 
 const SESSION = { user: USER, accessToken: 'access-1', refreshToken: 'refresh-1' };
 
+const ADMIN: AuthUser = { ...USER, isGlobalAdmin: true };
+
 beforeEach(() => {
   useAuthStore.setState({
     accessToken: null,
     refreshToken: null,
     user: null,
     sessionGeneration: 0,
+    viewingAsMember: false,
   });
+  localStorage.removeItem(VIEW_MODE_STORAGE_KEY);
 });
 
 describe('sessionGeneration', () => {
@@ -104,5 +109,67 @@ describe('persistence', () => {
     const state = (stored as { state?: Record<string, unknown> }).state ?? {};
 
     expect(Object.keys(state).sort()).toEqual(['accessToken', 'refreshToken', 'user']);
+  });
+});
+
+/**
+ * "View as member".
+ *
+ * The rule that carries the feature is the difference between the REAL flag and
+ * the EFFECTIVE one: everything that decides what the product looks like reads
+ * the effective flag, and the two controls that turn the preview OFF read the
+ * real one. Getting that backwards produces a one-way door — member view on, no
+ * control left that can turn it off — which is a bug you can only escape by
+ * clearing site data.
+ */
+describe('view as member', () => {
+  it('starts off, and is off for a non-admin whatever the flag says', () => {
+    useAuthStore.getState().setSession(SESSION);
+
+    expect(useAuthStore.getState().viewingAsMember).toBe(false);
+    expect(useAuthStore.getState().isGlobalAdmin()).toBe(false);
+    expect(useAuthStore.getState().isEffectiveGlobalAdmin()).toBe(false);
+
+    useAuthStore.getState().setViewingAsMember(true);
+    expect(useAuthStore.getState().isEffectiveGlobalAdmin()).toBe(false);
+  });
+
+  it('separates the real flag from the effective one', () => {
+    useAuthStore.getState().setSession({ ...SESSION, user: ADMIN });
+
+    expect(useAuthStore.getState().isGlobalAdmin()).toBe(true);
+    expect(useAuthStore.getState().isEffectiveGlobalAdmin()).toBe(true);
+
+    useAuthStore.getState().setViewingAsMember(true);
+
+    // REAL stays true — it is what keeps the pill and the menu row on screen.
+    expect(useAuthStore.getState().isGlobalAdmin()).toBe(true);
+    expect(useAuthStore.getState().isEffectiveGlobalAdmin()).toBe(false);
+  });
+
+  it('persists under its OWN key, never inside the session blob', () => {
+    useAuthStore.getState().setSession({ ...SESSION, user: ADMIN });
+    useAuthStore.getState().setViewingAsMember(true);
+
+    expect(localStorage.getItem(VIEW_MODE_STORAGE_KEY)).toBe('1');
+
+    const stored: unknown = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) ?? '{}');
+    const state = (stored as { state?: Record<string, unknown> }).state ?? {};
+    expect(Object.keys(state)).not.toContain('viewingAsMember');
+  });
+
+  /**
+   * Persisted so it survives a RELOAD, not so it survives a change of person:
+   * the next admin to sign in on this device would otherwise arrive to a
+   * console with no Administration section and no idea why.
+   */
+  it('is dropped on sign-out, in state and in storage', () => {
+    useAuthStore.getState().setSession({ ...SESSION, user: ADMIN });
+    useAuthStore.getState().setViewingAsMember(true);
+
+    useAuthStore.getState().clearSession();
+
+    expect(useAuthStore.getState().viewingAsMember).toBe(false);
+    expect(localStorage.getItem(VIEW_MODE_STORAGE_KEY)).toBe('0');
   });
 });

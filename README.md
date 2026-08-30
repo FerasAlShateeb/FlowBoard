@@ -36,8 +36,22 @@ is spelled out; you copy and paste it.
   watching changes.
 - **Find anything instantly** — a command palette on `Ctrl+K`, org-wide issue
   search, and a keyboard shortcut for everything (`?` lists them).
-- **Make it yours** — a Theme Studio for colours and fonts, light and dark modes,
+- **Make it yours** — a Theme Studio for colours and fonts in a **slide-over
+  drawer** you can open from any screen (`Ctrl+Shift+T`), light and dark modes,
   and a full **Arabic interface with right-to-left layout**.
+- **Run the whole installation** from an admin console: people, organizations
+  (create, archive, restore), a cross-organization project list, and
+  instance-wide settings.
+- **Run it for one team instead of many.** A **single-organization mode** hides
+  the organization switcher and every "pick an organization" step, without
+  changing the data model — flip it back whenever you grow.
+- **See how the product is doing** in a built-in analytics console —
+  engagement, delivery, traffic and growth — where every headline number opens
+  a full breakdown with filters and a CSV export. It reads FlowBoard's own
+  database; no third-party analytics service is involved.
+- **Keep the interface calm.** Animation is off by default beyond a 130 ms
+  transition, and a Motion setting on your profile lets you choose Full, Reduced
+  or Follow-my-system.
 
 **[→ Take the full feature tour](./docs/features-tour.md)** — a screen-by-screen
 walkthrough of every surface, including the complete shortcut list.
@@ -275,9 +289,9 @@ The technical documentation lives elsewhere, and it is thorough:
 - **[CLAUDE.md](./CLAUDE.md)** — the non-negotiable hard rules (pnpm only, no
   `any`, zod at every boundary, LF endings, i18n for every string).
 - **[.agents/INDEX.md](./.agents/INDEX.md)** — the master router into
-  architecture, coding standards, the design system, database, auth, i18n,
-  diagnostics, telemetry, realtime, and testing docs, plus workflows,
-  checklists, and subagent role cards.
+  architecture, coding standards, the design system, database, auth, instance
+  administration, analytics, i18n, motion, diagnostics, telemetry, realtime, and
+  testing docs, plus workflows, checklists, and subagent role cards.
 - **[docs/features-tour.md](./docs/features-tour.md)** — every surface in the
   product, described at reader level, with the full shortcut list. The fastest
   way to learn what FlowBoard actually does before reading how it does it.

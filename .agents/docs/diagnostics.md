@@ -330,12 +330,18 @@ matters. The admin flag is read the same way `routes/guards.tsx` reads it: the
 `/auth/me` response when it has arrived, the persisted `useAuthStore` flag while it
 is in flight, so the drawer does not blink out of existence on every reload.
 
+**And it is the EFFECTIVE flag** (R2 W3.5): the ladder above is ANDed with
+`!viewingAsMember`, so an admin previewing member view gets no trigger, no chords
+and no panel. The drawer is chrome, and admin.md §4.1's rule for chrome is that
+every surface reads `isEffectiveGlobalAdmin()` — it is listed there as a consumer.
+
 ## 4. Keyboard
 
 Both chords are registered through the central registry
 (`registerShortcut` in `apps/web/src/lib/shortcuts.ts`) rather than as loose
 listeners, so the shortcut cheat sheet can list them truthfully and a collision is
-loud rather than silent. Both are registered **only for a global admin**.
+loud rather than silent. Both are registered **only for an effective global admin**
+(§3.x above: the real flag AND `!viewingAsMember`).
 
 | Chord         | `id`                    | Action                                                   | `allowInInputs` |
 | ------------- | ----------------------- | -------------------------------------------------------- | --------------- |

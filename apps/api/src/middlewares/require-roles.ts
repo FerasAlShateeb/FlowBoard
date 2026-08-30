@@ -15,6 +15,36 @@
  * membership. A missing entity is a 404; an authenticated caller without
  * sufficient role is a 403 (existence of orgs/projects is not treated as a
  * secret inside a company tool — simpler to test and debug than 404-masking).
+ *
+ * ═══ ORG LIVENESS IS PART OF RESOLUTION, NOT A SEPARATE CHECK (R2 W3.5) ═════
+ *
+ * Archiving an organization is `DELETE /api/admin/orgs/:orgId` → a soft delete
+ * (`organizations.deleted_at`), and the instance console presents it as
+ * "revoke this deployment". It used to revoke almost nothing: `requireOrgRole`
+ * checked `organizations.deletedAt` because it had an `:orgId` in hand, but the
+ * project guards never looked at the org at all. A project row is not soft
+ * deleted when its org is archived (the archive is one UPDATE, by design — see
+ * `orgs.service.softDeleteOrg`), so every `/api/projects/:projectId/*`,
+ * `/api/tasks/:taskId`, `/api/sprints/:sprintId`, `/api/comments/:commentId`
+ * and `/api/attachments/:attachmentId` route still resolved, still found the
+ * caller's `org_members` row, and still answered — reads AND writes — for an
+ * organization the admin had just switched off.
+ *
+ * Both halves of the chain therefore join `organizations` and require
+ * `deleted_at IS NULL`:
+ *
+ *  - {@link resolveProjectRef} — a project inside an archived org does not
+ *    resolve, so the route 404s exactly as it does for a deleted project. This
+ *    is the load-bearing half: it fires before any role is considered, so it
+ *    covers a global admin browsing the archived org's tasks too.
+ *  - {@link findOrgRole} — an `org_members` row in an archived org grants no
+ *    role, so the inheritance chain cannot promote anyone through a dead org.
+ *    Defence in depth for the ref check, and the half that also protects
+ *    {@link resolveProjectRole}'s socket callers.
+ *
+ * The archive is reversible (`POST /api/admin/orgs/:orgId/restore`), and so is
+ * this: clearing `deleted_at` makes every one of those routes resolve again
+ * with no other write.
  */
 import type { RequestHandler, Response } from 'express';
 import { and, eq, isNull } from 'drizzle-orm';
@@ -85,16 +115,37 @@ async function assertSessionLive(userId: string, tokenVersion: number): Promise<
   }
 }
 
+/**
+ * The caller's org role, or `null`.
+ *
+ * An archived organization grants NO role, however real the `org_members` row
+ * is — see the header. The join is what makes that true for every caller of
+ * {@link resolveProjectRole}, including the socket gateway's `project:join`.
+ */
 async function findOrgRole(userId: string, orgId: string): Promise<OrgRole | null> {
   const [row] = await db
     .select({ role: orgMembers.role })
     .from(orgMembers)
-    .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId)))
+    .innerJoin(organizations, eq(orgMembers.orgId, organizations.id))
+    .where(
+      and(
+        eq(orgMembers.orgId, orgId),
+        eq(orgMembers.userId, userId),
+        isNull(organizations.deletedAt),
+      ),
+    )
     .limit(1);
   return row?.role ?? null;
 }
 
-/** Resolve `{projectId, orgId}` from whichever param the route carries. */
+/**
+ * Resolve `{projectId, orgId}` from whichever param the route carries.
+ *
+ * EVERY path joins `organizations` and requires a live one. A project whose org
+ * was archived is unreachable through all five sources — that is the fix
+ * described in the header, and it is deliberately here rather than in the role
+ * check so that it also covers a global admin, who never consults a role.
+ */
 async function resolveProjectRef(
   source: ProjectIdSource,
   paramValue: string,
@@ -103,7 +154,14 @@ async function resolveProjectRef(
     const [row] = await db
       .select({ projectId: projects.id, orgId: projects.orgId })
       .from(projects)
-      .where(and(eq(projects.id, paramValue), isNull(projects.deletedAt)))
+      .innerJoin(organizations, eq(projects.orgId, organizations.id))
+      .where(
+        and(
+          eq(projects.id, paramValue),
+          isNull(projects.deletedAt),
+          isNull(organizations.deletedAt),
+        ),
+      )
       .limit(1);
     return row ?? null;
   }
@@ -113,7 +171,15 @@ async function resolveProjectRef(
       .select({ projectId: projects.id, orgId: projects.orgId })
       .from(tasks)
       .innerJoin(projects, eq(tasks.projectId, projects.id))
-      .where(and(eq(tasks.id, paramValue), isNull(tasks.deletedAt), isNull(projects.deletedAt)))
+      .innerJoin(organizations, eq(projects.orgId, organizations.id))
+      .where(
+        and(
+          eq(tasks.id, paramValue),
+          isNull(tasks.deletedAt),
+          isNull(projects.deletedAt),
+          isNull(organizations.deletedAt),
+        ),
+      )
       .limit(1);
     return row ?? null;
   }
@@ -123,7 +189,14 @@ async function resolveProjectRef(
       .select({ projectId: projects.id, orgId: projects.orgId })
       .from(sprints)
       .innerJoin(projects, eq(sprints.projectId, projects.id))
-      .where(and(eq(sprints.id, paramValue), isNull(projects.deletedAt)))
+      .innerJoin(organizations, eq(projects.orgId, organizations.id))
+      .where(
+        and(
+          eq(sprints.id, paramValue),
+          isNull(projects.deletedAt),
+          isNull(organizations.deletedAt),
+        ),
+      )
       .limit(1);
     return row ?? null;
   }
@@ -134,12 +207,14 @@ async function resolveProjectRef(
       .from(comments)
       .innerJoin(tasks, eq(comments.taskId, tasks.id))
       .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .innerJoin(organizations, eq(projects.orgId, organizations.id))
       .where(
         and(
           eq(comments.id, paramValue),
           isNull(comments.deletedAt),
           isNull(tasks.deletedAt),
           isNull(projects.deletedAt),
+          isNull(organizations.deletedAt),
         ),
       )
       .limit(1);
@@ -151,12 +226,14 @@ async function resolveProjectRef(
     .from(attachments)
     .innerJoin(tasks, eq(attachments.taskId, tasks.id))
     .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .innerJoin(organizations, eq(projects.orgId, organizations.id))
     .where(
       and(
         eq(attachments.id, paramValue),
         isNull(attachments.deletedAt),
         isNull(tasks.deletedAt),
         isNull(projects.deletedAt),
+        isNull(organizations.deletedAt),
       ),
     )
     .limit(1);
@@ -166,6 +243,17 @@ async function resolveProjectRef(
 /**
  * Effective project role for a user, or `null` when they have no access.
  * Exported for services that need access checks outside a request (sockets).
+ *
+ * It takes a ref rather than an id, so ORG LIVENESS IS THE CALLER'S FIRST GATE:
+ * `requireProjectRole` gets its ref from {@link resolveProjectRef} and the
+ * socket gateway from `sockets/socket-reads.loadProjectRef`, both of which now
+ * refuse to produce a ref for an archived org. The `findOrgRole` join below is
+ * the second gate — it is what stops an org-admin membership in an archived org
+ * from promoting anyone, even if a future caller hands in a hand-built ref.
+ *
+ * The global-admin short-circuit stays a short-circuit on purpose: a global
+ * admin's access is not derived from any org row, so gating it here would only
+ * duplicate the ref check that already ran.
  */
 export async function resolveProjectRole(
   user: { id: string; isGlobalAdmin: boolean },

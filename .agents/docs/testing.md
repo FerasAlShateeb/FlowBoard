@@ -52,7 +52,7 @@ instead of a symptom three layers away.
 | --------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `pnpm test`                                                     | Every suite via turbo (`turbo run test`), **e2e included** — see §2.5.  |
 | `pnpm --filter @flowboard/shared test`                          | The contract suites only. No infrastructure at all.                     |
-| `pnpm --filter @flowboard/api test`                             | The API suites. **26 of the 41 files need a live Postgres** — see §2.2. |
+| `pnpm --filter @flowboard/api test`                             | The API suites. **31 of the 46 files need a live Postgres** — see §2.2. |
 | `pnpm --filter @flowboard/web test`                             | The web suites. No infrastructure; jsdom is a devDependency.            |
 | `pnpm --filter @flowboard/e2e exec playwright install chromium` | Fetch the browser. Once per machine — `pnpm install` does not do it.    |
 | `pnpm e2e`                                                      | Just the Playwright suite (`pnpm --filter @flowboard/e2e test`).        |
@@ -78,7 +78,7 @@ pnpm --filter @flowboard/api exec vitest run -t 'refuses a second active sprint'
 sequential by design (§2.3) and takes ~100 s end to end; one route file takes
 about two seconds.
 
-### 2.2 Does the API suite need a live Postgres? Yes — 26 of its 41 files do
+### 2.2 Does the API suite need a live Postgres? Yes — 31 of its 46 files do
 
 **`DATABASE_URL` is the variable, and `apps/api/vitest.config.ts` sets it
 itself** — it is not read from an `.env` file:
@@ -102,7 +102,7 @@ git-ignored file.
 **What happens if Postgres is not listening on 5433.** `src/test/test-db.ts`'s
 `ensureTestDb()` opens a connection to the `postgres` maintenance database to
 issue `CREATE DATABASE` — so the failure arrives in `beforeAll` as a connection
-error (`ECONNREFUSED 127.0.0.1:5433`), and **every test in all 26
+error (`ECONNREFUSED 127.0.0.1:5433`), and **every test in all 31
 database-backed files fails at once**. It is never a subtle wrong answer; it is
 a wall of identical connection errors. Bring the container up first:
 
@@ -150,6 +150,17 @@ Per-package databases were considered and rejected: the suites already run in
 about a minute and a half sequentially, and N databases means N migrate passes
 plus a cleanup story for the leftovers (Wave 4 left a stray `flowboard_test_wp42`
 behind exactly this way — it is still on the dev container).
+
+**`hookTimeout` is 30 s in the api config** (R2 W3.5), while `testTimeout` keeps
+Vitest's default. The 10 s hook default assumes a `beforeEach` that wires up
+objects; these hooks do real I/O — `truncateAllTables()` is a `TRUNCATE` across
+every table, and the socket suites additionally boot an HTTP and a Socket.IO
+server per test, thirty-plus times in `realtime-bridge.test.ts` alone. That is
+well under 10 s idle and not under load: `turbo run test` schedules
+`@flowboard/api` alongside the web package's 2 500-test suite, and the full gate
+failed twice in exactly that hook while the two competed for cores. **Raise a
+HOOK timeout, never a TEST one** — a hook deadline is a deadlock detector on
+setup, while a test deadline is an assertion about how fast the product answers.
 
 **If a suite fails with `type "…" already exists` or `relation … already
 exists`,** the migration FILE changed and the test database still holds the old
@@ -200,7 +211,7 @@ its import block.
 
 | File                                                                         | Provides                                                                                                                                                                                                                                                                                                                                   | Used by                                                                                                                                                    |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/test/test-db.ts`                                               | `ensureTestDb()` (create + migrate, memoized per process) and `truncateAllTables()` (`TRUNCATE … RESTART IDENTITY CASCADE` over every non-journal table).                                                                                                                                                                                  | All 26 database-backed API files                                                                                                                           |
+| `apps/api/src/test/test-db.ts`                                               | `ensureTestDb()` (create + migrate, memoized per process) and `truncateAllTables()` (`TRUNCATE … RESTART IDENTITY CASCADE` over every non-journal table).                                                                                                                                                                                  | All 31 database-backed API files                                                                                                                           |
 | `apps/api/src/routes/__tests__/identity-test-app.ts`                         | `buildTestApp()` (auth + invites + admin-users routers), `seedUser`/`seedOrg`/`seedOrgMember`/`seedProject`/`seedInvite`, `tokensFor`, `bearer`, `orgRolesOf`, `projectRolesOf`, and `TEST_PASSWORD`.                                                                                                                                      | `auth`, `invites`, `admin-users` route suites                                                                                                              |
 | `apps/api/src/routes/__tests__/fixtures.ts`                                  | `createTestApp()` (orgs + projects routers), `createUser`/`createOrg`/`createTeam`/`createProject`/`createLabel`/`createTask`, and `createProjectWorld()` — one org, one project, and one account per role including an `outsider`.                                                                                                        | `orgs`, `projects`, `teams`, `project-members`, `labels`, `workflow` route suites                                                                          |
 | `apps/api/src/routes/__tests__/task-domain.fixtures.ts`                      | `createTaskTestApp()` (tasks + comments + attachments + sprints + search + reports, behind `socketIdMiddleware`), `seedWorld()` with `inProgressWipLimit`/`restrictTransitions` options, `seedTask`/`seedSprint`/`seedLabel`/`attachLabel`, `nextRank()`, plus `captureTelemetry`/`captureDomainEvent`/`flushAsync`.                       | `tasks`, `tasks-move`, `tasks-patch`, `comments`, `attachments`, `sprints`, `search`, `reports`, `activity`, `task-activity`, `notifications` route suites |
@@ -286,71 +297,122 @@ the call site receives; spreading the result either fails to type-check or
 produces an inferred type that is not nameable at all (`TS2742`). Listing the
 members the suites actually use sidesteps both, and `screen` covers the rest.
 
+**A suite that renders a grid needs `BrowserRouter`, not `MemoryRouter`.** This
+is the one router choice in the repo that is not interchangeable, and it applies
+to every page driven by `hooks/useGridUrlState` — `AdminOrgsPage`,
+`AdminUsersPage`, `AdminProjectsPage`, `AdminTelemetryEventsPage`.
+
+The hook diffs its own owned params against **`window.location.search`**, not
+against the rendered `useSearchParams()` value, because React Router runs
+navigations inside a transition: `setSearchParams` writes `window.location`
+synchronously while the render carrying the matching value stays deferred and
+interruptible. Under a `MemoryRouter` there is no `window.location` to read, so
+the hook sees an empty query string, concludes somebody else changed the URL,
+and re-hydrates the grid back to its defaults **on every keystroke**. The
+symptom is a search box that clears itself, in a component that is fine.
+
+The pure codec — `encodeGridParams`, `decodeGridParams`, `ownedSearch`,
+`shouldPush` — is exported precisely so the rules can be tested with no router
+and no DOM at all: `hooks/useGridUrlState.test.ts` runs in the default node
+environment. **Test the codec there and the wiring in the page suite**; every
+bug in this area has been about which values reach the URL.
+
 ---
 
 ## 4. The spec inventory
 
-Counted 2026-08-28 over `apps/**` and `packages/**`. Playwright specs are
-`*.spec.ts` and are not included in these numbers.
+**This section is an area map, not a scoreboard.** A file and case count goes
+stale within a wave and a stale number is worse than no number, so the totals
+live in the command rather than in the prose:
 
-### 4.1 Totals
+```bash
+find apps packages -name '*.test.ts' -o -name '*.test.tsx' | grep -v node_modules | wc -l
+grep -rl '@vitest-environment jsdom' apps/web/src | wc -l   # the jsdom subset
+pnpm turbo run test                                          # the case count, from the runner
+```
 
-| Workspace         | Spec files | Cases     |
-| ----------------- | ---------- | --------- |
-| `packages/shared` | 8          | 276       |
-| `apps/api`        | 41         | 872       |
-| `apps/web`        | 103        | 1 753     |
-| **Total**         | **152**    | **2 901** |
+Playwright specs are `*.spec.ts` under `e2e/` and are counted in §6, not here.
+The one count worth writing down is operational rather than cosmetic — how many
+API files need Postgres (§2.2) — because it decides whether a failure is a
+missing container or a real defect.
 
-Of the 103 web files, **39 carry the `// @vitest-environment jsdom` pragma**; the
-other 64 are node-environment logic suites.
-
-### 4.2 Shared contracts — 8 files
+### 4.2 Shared contracts
 
 `auth.test.ts`, `comments.test.ts`, `common.test.ts`, `contracts.test.ts`,
-`envelope.test.ts`, `rank.test.ts`, `tasks.test.ts`, `socket/events.test.ts`.
+`envelope.test.ts`, `rank.test.ts`, `tasks.test.ts`, `socket/events.test.ts`,
+plus the Round-2 trio `instance.test.ts`, `admin-orgs.test.ts` and
+`admin-analytics.test.ts`.
 `envelope.test.ts` pins the `{success,data,meta?,error?}` shape every response
 uses; `rank.test.ts` pins the fractional-index wrappers the board, the backlog
 and the seed all depend on; `socket/events.test.ts` walks every server→client
 payload schema, so a wire field added on one side and forgotten on the other
 fails here rather than in a browser.
 
-### 4.3 API — 41 files
+### 4.3 API
 
-| Group                    | Files | Notable specs                                                                                                                                                                                                                                                                                                                      |
-| ------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `routes/__tests__`       | 22    | `tasks.routes` (incl. unique `PROJ-N` allocation under ten concurrent creates), `tasks-move` / `tasks-patch`, `sprints.routes` (the second-active-sprint race, and the calendar-day window round-trip), `task-activity.routes` (keyset paging, the closed audit enum), `router-mounting.test.ts` (the real-app reachability gate). |
-| `services`               | 3     | `notifications.service` (recipient math: actor subtraction, mute, watcher fan-out), `task-move.service`, `telemetry.service`.                                                                                                                                                                                                      |
-| `utils`                  | 5     | `rank-rebalance` (the only DB-backed util suite), `jwt`, `domain-events`, `log-ring`, `password` (the scrypt hash/verify round trip).                                                                                                                                                                                              |
-| `middlewares`            | 5     | `validate` (the zod→422 path), `error-handler` (the single envelope formatter), `request-logger`, `socket-id`, `rate-limit` (the 429 path and its keying).                                                                                                                                                                         |
-| `sockets`                | 3     | `__tests__/gateway` (handshake accept/refuse, rooms), `__tests__/realtime-bridge` (echo suppression across two live clients), `presence`.                                                                                                                                                                                          |
-| `db` + `app` + `scripts` | 3     | `db/schema.test.ts` (enum parity against `@flowboard/shared`, the soft-delete list, the seven task read paths, bigserial stream ids), `app.test.ts`, `scripts/seed-utils.test.ts` (the rank-ordering property).                                                                                                                    |
+| Group                               | Notable specs                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `routes/__tests__`                  | `tasks.routes` (incl. unique `PROJ-N` allocation under ten concurrent creates), `tasks-move` / `tasks-patch`, `sprints.routes` (the second-active-sprint race, and the calendar-day window round-trip), `task-activity.routes` (keyset paging, the closed audit enum), `router-mounting.test.ts` (the real-app reachability gate).                                                                                 |
+| `routes/__tests__` — instance admin | `instance-settings.routes` (the `/instance/config` vs `/admin/settings` guard split, lazy row creation, every `PATCH` refusal), `orgs-admin.routes` (`?q`, `?scope=member`, `?includeDeleted` and its 403s, the restore matrix), `admin-users-lifecycle.routes` (memberships, provisioning, the whole anonymize-delete suite), `admin-projects.routes` (row shape across tenants, the sort whitelist, pagination). |
+| `routes/__tests__` — analytics      | `admin-analytics.routes` — the global-admin gate on all five paths, the shared window contract (interval enum, malformed instant, the bucket ceiling, the 30 d default), then hand-worked figures per domain.                                                                                                                                                                                                      |
+| `services`                          | `notifications.service` (recipient math: actor subtraction, mute, watcher fan-out), `task-move.service`, `telemetry.service`.                                                                                                                                                                                                                                                                                      |
+| `utils`                             | `rank-rebalance` (the only DB-backed util suite), `jwt`, `domain-events`, `log-ring`, `password` (the scrypt hash/verify round trip).                                                                                                                                                                                                                                                                              |
+| `middlewares`                       | `validate` (the zod→422 path), `error-handler` (the single envelope formatter), `request-logger`, `socket-id`, `rate-limit` (the 429 path and its keying).                                                                                                                                                                                                                                                         |
+| `sockets`                           | `__tests__/gateway` (handshake accept/refuse, rooms), `__tests__/realtime-bridge` (echo suppression across two live clients), `presence`.                                                                                                                                                                                                                                                                          |
+| `db` + `app` + `scripts`            | `db/schema.test.ts` (enum parity against `@flowboard/shared`, the soft-delete list, the seven task read paths, the check-constraint list, bigserial stream ids), `app.test.ts`, `scripts/seed-utils.test.ts` (the rank-ordering property).                                                                                                                                                                         |
 
-**26 of the 41 need a live Postgres**; the 15 that do not are listed in §2.2.
+**31 of the API's files need a live Postgres**; the 15 that do not are listed in
+§2.2 and have not changed.
 
-### 4.4 Web — 103 files
+### 4.4 Web
 
-| Group                      | Files | Notable specs                                                                                                                                                                                                               |
-| -------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `components/tasks`         | 12    | `TaskDetailPanel`, `TaskFieldsSidebar`, `TaskHeaderBar`, `TaskCreateDialog`, `MentionTextarea`, `Markdown`, `AttachmentSection`, plus `mentions`, `task-dates`, `subtask-progress`, `activity-format`, `upload-state`.      |
-| `hooks`                    | 11    | `useTaskMutations`, `useTasks`, `useAuth`, `useWatchers` (every cache entry holding a task's detail), `useRealtime`, `useNotifications`, `useAttachments`, `useReports`, `useSearch`, `useAdminUsers`, `useAdminTelemetry`. |
-| `lib`                      | 10    | `api` (envelope unwrap + the single-flight refresh), `realtime-cache`, `board-cache`, `query-keys`, `socket`, `csv`, `format`, `shortcuts`, `telemetry-client`, `project-key`.                                              |
-| `components/datatable`     | 7     | `TaskDataTable`, `cells`, `csv-rows`, `table-sort`, `table-filters`, `table-prefs`, `useCellPatch`.                                                                                                                         |
-| `stores`                   | 6     | `useAuthStore`, `useBoardFilterStore`, `useLayoutStore`, `usePresenceStore`, `useThemeStore`, `useDiagLogsStore`.                                                                                                           |
-| `components/theme`         | 6     | `ThemeStudio`, `theme-presets`, `theme-file`, `theme-storage`, `color`, `favicon-updater`.                                                                                                                                  |
-| `components/reports`       | 6     | `report-cards`, `report-summaries`, `report-range`, `chart-format`, `chart-theme` (the `chartStyle` token), `sprint-default`.                                                                                               |
-| `components/gantt`         | 6     | `GanttChart`, `useGanttGeometry`, `useGanttDependencies`, `gantt-arrows`, `gantt-drag`, `gantt-rows`.                                                                                                                       |
-| `components/board`         | 6     | `BoardCanvas`, `BoardColumn`, `BoardCard`, `dnd`, `swimlanes`, `board-meta`.                                                                                                                                                |
-| `components/backlog`       | 6     | `BacklogSections`, `SprintDialogs`, `backlog-dnd`, `backlog-points`, `backlog-dates`, `backlog-collapse`.                                                                                                                   |
-| `components/palette`       | 5     | `CommandPalette`, `ShortcutsCheatSheet`, `shortcuts-wiring`, `palette-items`, `chords`.                                                                                                                                     |
-| `components/calendar`      | 5     | `CalendarMonthView`, `useCalendarTasks`, `calendar-layout`, `calendar-dates`, `calendar-dnd`.                                                                                                                               |
-| `components/notifications` | 4     | `NotificationBell`, `NotificationsPage`, `optimistic-read`, `notification-sentence`.                                                                                                                                        |
-| `pages` + `routes`         | 4     | `ThemePage`, `admin/AdminUsersPage`, `project/TaskSheetPage`, `routes/auth-gate`.                                                                                                                                           |
-| `i18n`                     | 3     | `locales` (en↔ar key parity — the Arabic catalogue is complete and must stay complete), `errors`, `validation`.                                                                                                             |
-| `components/admin`         | 2     | `admin-telemetry-ui`, `telemetry-range`.                                                                                                                                                                                    |
-| `components/diagnostics`   | 2     | `DiagnosticsDrawer`, `diag-chrome`.                                                                                                                                                                                         |
-| `components/common`        | 1     | `task-icons`.                                                                                                                                                                                                               |
-| `components/workflow`      | 1     | `StatusList` — `statusSyncSignature`, the rule deciding when the editor's local copy re-syncs from the server.                                                                                                              |
+| Group                        | Notable specs                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `components/tasks`           | `TaskDetailPanel`, `TaskFieldsSidebar`, `TaskHeaderBar`, `TaskCreateDialog`, `MentionTextarea`, `Markdown`, `AttachmentSection`, plus `mentions`, `task-dates`, `subtask-progress`, `activity-format`, `upload-state`.                                                                                                                                     |
+| `hooks`                      | `useTaskMutations`, `useTasks`, `useAuth`, `useWatchers` (every cache entry holding a task's detail), `useRealtime`, `useNotifications`, `useAttachments`, `useReports`, `useSearch`, `useAdminUsers`, `useAdminTelemetry`, plus the Round-2 `useAdminOrgs`, `useAdminProjects`, `useInstanceSettings`, `useLastOrg` and the pure `useGridUrlState` codec. |
+| `lib`                        | `api` (envelope unwrap + the single-flight refresh), `realtime-cache`, `board-cache`, `query-keys`, `socket`, `csv`, `format`, `shortcuts`, `telemetry-client`, `project-key`, and the two motion suites (`motion-policy`, `motion-imports`).                                                                                                              |
+| `components/dashboard`       | `DataTable`, `PanelCard` (the state ladder and the no-fixed-aspect rule), `StatTile` + `StatDelta`, `range`, `format`, `series-delta`, `save-blob`.                                                                                                                                                                                                        |
+| `components/admin/analytics` | `metric-registry` (shape, i18n exhaustiveness over **both** catalogs, `detailPath`/`lookupMetric` prototype guards, sorting, and the one-request-per-domain fetch contract), `MetricChart`, `MetricTile`.                                                                                                                                                  |
+| `components/datatable`       | `TaskDataTable`, `cells`, `csv-rows`, `table-sort`, `table-filters`, `table-prefs`, `useCellPatch`.                                                                                                                                                                                                                                                        |
+| `stores`                     | `useAuthStore`, `useBoardFilterStore`, `useLayoutStore`, `usePresenceStore`, `useThemeStore`, `useDiagLogsStore`, `useAnalyticsStore` (cold/warm, the preset cache key).                                                                                                                                                                                   |
+| `components/theme`           | `ThemeStudio`, `ThemeStudioDrawer` (focus, Escape, the roving tablist and its RTL flip), `theme-presets`, `theme-file`, `theme-storage`, `color`, `favicon-updater`.                                                                                                                                                                                       |
+| `components/reports`         | `report-cards`, `report-summaries`, `report-range`, `chart-format`, `chart-theme` (the `chartStyle` token), `chart-animation` (`useColdChart`), `sprint-default`.                                                                                                                                                                                          |
+| `components/gantt`           | `GanttChart`, `useGanttGeometry`, `useGanttDependencies`, `gantt-arrows`, `gantt-drag`, `gantt-rows`.                                                                                                                                                                                                                                                      |
+| `components/board`           | `BoardCanvas`, `BoardColumn`, `BoardCard`, `dnd`, `swimlanes`, `board-meta`, `DropSettle`.                                                                                                                                                                                                                                                                 |
+| `components/backlog`         | `BacklogSections`, `SprintDialogs`, `backlog-dnd`, `backlog-points`, `backlog-dates`, `backlog-collapse`.                                                                                                                                                                                                                                                  |
+| `components/navigation`      | `nav.config` (the `buildSections` gate matrix), `breadcrumb-trail` (the four crumb families), `view-as` (the bounce rule) — all node-environment, no router, no i18next.                                                                                                                                                                                   |
+| `components/layout`          | `Sidebar` and `OrgSwitcher` (the escape routes), `PresenceAvatars`.                                                                                                                                                                                                                                                                                        |
+| `components/palette`         | `CommandPalette`, `ShortcutsCheatSheet`, `shortcuts-wiring`, `palette-items`, `chords`.                                                                                                                                                                                                                                                                    |
+| `components/calendar`        | `CalendarMonthView`, `useCalendarTasks`, `calendar-layout`, `calendar-dates`, `calendar-dnd`.                                                                                                                                                                                                                                                              |
+| `components/notifications`   | `NotificationBell`, `NotificationsPage`, `optimistic-read`, `notification-sentence`.                                                                                                                                                                                                                                                                       |
+| `components/common`          | `task-icons`, `MotionCard`, `RouteSkeleton`.                                                                                                                                                                                                                                                                                                               |
+| `components/ui`              | `round2-primitives`, `alert-dialog`, `collapsible`, `animated-tooltip`.                                                                                                                                                                                                                                                                                    |
+| `pages` + `routes`           | `ThemePage`, the five `admin/Admin*Page` suites, `admin/AnalyticsDetailPage` and `AnalyticsEngagementPage`, `project/TaskSheetPage`, `routes/auth-gate`.                                                                                                                                                                                                   |
+| `i18n`                       | `locales` (en↔ar key parity — the Arabic catalogue is complete and must stay complete), `errors`, `validation`.                                                                                                                                                                                                                                            |
+| `components/admin`           | `admin-telemetry-ui`, `telemetry-range`.                                                                                                                                                                                                                                                                                                                   |
+| `components/diagnostics`     | `DiagnosticsDrawer`, `diag-chrome`.                                                                                                                                                                                                                                                                                                                        |
+| `components/workflow`        | `StatusList` — `statusSyncSignature`, the rule deciding when the editor's local copy re-syncs from the server.                                                                                                                                                                                                                                             |
+
+### 4.5 The two enforcement suites
+
+Two web suites are not tests of behaviour but of **discipline**, and both would
+be worthless as a convention:
+
+- **`lib/motion-imports.test.ts`** reads the real source tree with
+  `import.meta.glob('/src/**/*.{ts,tsx}', { query: '?raw', eager: true })` and
+  asserts the files importing the `motion` library are **exactly**
+  `MOTION_LIBRARY_FILES`. The animation runtime is the part `index.css`'s
+  `data-motion` gate cannot see, so it is the part counted by hand. It also
+  checks the glob sees more than a hundred files, so it cannot rot into a silent
+  no-op. See [motion.md](./motion.md) §5.1.
+- **`components/admin/analytics/metric-registry.test.ts`** resolves every i18n
+  key the registry emits against **both** catalogs and asserts catalog↔registry
+  id parity in both directions. English is typed; Arabic is not, so a
+  half-translated metric compiles cleanly and fails only here.
+
+**Copy the shape, not the file.** A rule that cannot be expressed in a type is
+worth a suite that greps for it — but it needs a self-check (does the scan see
+anything at all?) or it becomes a test that passes because it read nothing.
 
 ---
 
@@ -396,9 +458,18 @@ Two async shapes need an explicit settle rather than a sleep:
 
 ## 6. End-to-end (Playwright)
 
-43 tests in 16 files, all of them write-heavy against real servers, a real
+62 tests in 23 files, all of them write-heavy against real servers, a real
 Postgres and a real MinIO. Do not duplicate this section elsewhere: §2.1 gives
 the two commands, §2.5 gives the Chromium prerequisite.
+
+⚠️ **The seed has TWO organizations now** (`acme` and `globex`), which changed
+the first thing every spec used to do. A fresh session has no remembered org, so
+`/` renders the **organization picker** rather than redirecting — `smoke.spec`
+and `auth.spec` pick `acme` the way a person would, with
+`a[href="/o/acme"]`. Anything that asserts "signing in lands on the org home"
+has to click first. The second org is also what makes the switcher, the
+cross-org admin tables and single-organization mode testable at all: every one
+of those surfaces is a no-op on a one-organization deployment.
 
 ### 6.1 A cold start needs two things, and provisions the rest
 
@@ -456,7 +527,7 @@ A green suite that quietly rewrote the dev database is the failure this exists t
 make impossible. Both checks print to stdout, so a passing run says so:
 
 ```
-[e2e] flowboard_e2e: 61 tasks, 9 users, 2 projects
+[e2e] flowboard_e2e: 90 tasks, 10 users, 4 projects
 [e2e] the API is serving flowboard_e2e (admin 6f1e…)
 [e2e] flowboard untouched — row counts identical before and after
 [e2e] flowboard_test untouched — row counts identical before and after
@@ -484,9 +555,10 @@ for either to be weakened.
 
 - **Credentials, 10/minute.** `reserveAuthSlot()` in `helpers/api.ts` paces the
   login/refresh/invite calls, and token pairs are cached per account for the run
-  so fifteen files cost one login each. Only `auth.spec` ever waits.
+  so a file costs one login per account it drives, whatever its test count. Only
+  `auth.spec` ever waits.
 - **Everything else, 300/minute.** One page load of this app costs eight to ten
-  requests and a run is ~1 170 of them. Volume was never the problem —
+  requests, so the run is well into four figures. Volume was never the problem —
   distribution was: unpaced, the suite ran three consecutive minutes at 266-284
   and a 429 landed in whichever spec was unlucky. `helpers/rate-budget.ts`
   counts every API request (browser and helper alike) and holds each test at the
@@ -516,49 +588,68 @@ The roles that constrain the mapping: everything in the task domain — create,
 patch, move, comment, attach, delete — needs project `member`; sprint **start**
 and **complete** need project `admin`; `/admin/**` needs a global admin.
 
-| Account                       | Drives                                              |
-| ----------------------------- | --------------------------------------------------- |
-| `admin@flowboard.dev` (Ada)   | admin, auth, diagnostics, smoke, realtime (A)       |
-| `maya@` — org + project admin | board, task, notifications (as the commenter)       |
-| `nina@` — CORE project admin  | sprint, roadmap                                     |
-| `sara@` — member              | calendar, theme, notifications, realtime (B)        |
-| `liam@` — member              | table, palette, rtl                                 |
-| `omar@` — Arabic locale       | _deliberately not a driver_ — see `helpers/seed.ts` |
+| Account                       | Drives                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `admin@flowboard.dev` (Ada)   | admin, admin-nav, admin-orgs, admin-users, analytics, view-as, auth, diagnostics, smoke, realtime (A) |
+| `maya@` — org + project admin | board, task, workflow, theme-drawer (board half), notifications (as the commenter)                    |
+| `nina@` — CORE project admin  | sprint, roadmap                                                                                       |
+| `sara@` — member              | calendar, theme, notifications, realtime (B)                                                          |
+| `liam@` — member              | table, palette, rtl, theme-drawer, instance-mode (the member half)                                    |
+| `priya@` — Globex only        | never signs in — she OWNS `view-as.spec`'s fixture org (see below)                                    |
+| `omar@` — Arabic locale       | _deliberately not a driver_ — see `helpers/seed.ts`                                                   |
+
+The console specs all run as the global admin because there is no alternative:
+`/admin/**` is behind `requireGlobalAdmin`, and `admin.spec` already owns the
+one case that proves an org admin is refused.
+
+`priya@` is the exception worth explaining. `view-as.spec` has to observe
+`GET /orgs?scope=member` NARROWING something, and Ada is a member of both seeded
+organizations — so the spec provisions a third org with `adminUserId: priya`,
+which is an organization the admin can see and is not in. Without it, member
+view would remove no rows and a green test would prove nothing.
 
 ### 6.7 The spec inventory
 
-| File                    |  Tests | What it owns                                                                                                                                             |
-| ----------------------- | -----: | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `smoke.spec.ts`         |      1 | The one journey through the **login form**; do the two halves of the product still agree at all                                                          |
-| `auth.spec.ts`          |      5 | Bad password, sign-out, deep-link `returnTo`, invite → account, change-password revokes old refresh                                                      |
-| `board.spec.ts`         |      6 | Column counts vs the server, drag survives reload, WIP limit refuses, transition whitelist refuses, quick-add, filters + swimlanes                       |
-| `task.spec.ts`          |      1 | The full lifecycle: `c` → create → fields (incl. 0.5 points) → subtask → dependency cycle refused → @mention → S3 round trip → watch → activity → delete |
-| `sprint.spec.ts`        |      2 | Backlog reorder survives reload; create → fill → complete the running one → velocity gains a bar → start → board reflects                                |
-| `table.spec.ts`         |      4 | Inline edit written through, sort by Updated, column hide persists, CSV (BOM + headers + row count)                                                      |
-| `calendar.spec.ts`      |      3 | Chips on seeded due dates, drag to another day keeps the span length, unscheduled tray schedules                                                         |
-| `roadmap.spec.ts`       |      3 | Bars + dependency arrows, bar drag moves whole days keeping duration, zoom keeps the today line                                                          |
-| `realtime.spec.ts`      |      1 | **Two contexts**: A drags → B sees it with no reload; B's @mention rings A's bell; the bell deep-links                                                   |
-| `notifications.spec.ts` |      3 | Bell count + tab filters, a notification opens its task, mark-all-read                                                                                   |
-| `admin.spec.ts`         |      3 | Org admin refused in place, provision → temp password → deactivate, telemetry charts + this session's `page_view`s                                       |
-| `diagnostics.spec.ts`   |      3 | Global-admin only, Ctrl+J + rows streaming + level filter, dock cycle + resize + clipboard JSONL                                                         |
-| `theme.spec.ts`         |      2 | Preset applies live → saves → survives reload → resets; export/import round trip                                                                         |
-| `palette.spec.ts`       |      3 | Ctrl+K navigation, 3-char search opens a sheet, `?` cheat sheet reads the live registry                                                                  |
-| `rtl.spec.ts`           |      1 | Arabic: `dir=rtl`, board and sheet still render, **Western digits**, switch back                                                                         |
-| **Total**               | **41** |                                                                                                                                                          |
+| File                    |  Tests | What it owns                                                                                                                                                                           |
+| ----------------------- | -----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `smoke.spec.ts`         |      1 | The one journey through the **login form**; do the two halves of the product still agree at all                                                                                        |
+| `auth.spec.ts`          |      5 | Bad password, sign-out, deep-link `returnTo`, invite → account, change-password revokes old refresh                                                                                    |
+| `board.spec.ts`         |      6 | Column counts vs the server, drag survives reload, WIP limit refuses, transition whitelist refuses, quick-add, filters + swimlanes                                                     |
+| `task.spec.ts`          |      1 | The full lifecycle: `c` → create → fields (incl. 0.5 points) → subtask → dependency cycle refused → @mention → S3 round trip → watch → activity → delete                               |
+| `sprint.spec.ts`        |      2 | Backlog reorder survives reload; create → fill → complete the running one → velocity gains a bar → start → board reflects                                                              |
+| `table.spec.ts`         |      4 | Inline edit written through, sort by Updated, column hide persists, CSV (BOM + headers + row count)                                                                                    |
+| `calendar.spec.ts`      |      3 | Chips on seeded due dates, drag to another day keeps the span length, unscheduled tray schedules                                                                                       |
+| `roadmap.spec.ts`       |      3 | Bars + dependency arrows, bar drag moves whole days keeping duration, zoom keeps the today line                                                                                        |
+| `realtime.spec.ts`      |      1 | **Two contexts**: A drags → B sees it with no reload; B's @mention rings A's bell; the bell deep-links                                                                                 |
+| `notifications.spec.ts` |      3 | Bell count + tab filters, a notification opens its task, mark-all-read                                                                                                                 |
+| `admin.spec.ts`         |      3 | Org admin refused in place, provision → temp password → deactivate, telemetry charts + this session's `page_view`s                                                                     |
+| `diagnostics.spec.ts`   |      3 | Global-admin only, Ctrl+J + rows streaming + level filter, dock cycle + resize + clipboard JSONL                                                                                       |
+| `theme.spec.ts`         |      2 | Preset applies live → saves → survives reload → resets; export/import round trip                                                                                                       |
+| `palette.spec.ts`       |      3 | Ctrl+K navigation, 3-char search opens a sheet, `?` cheat sheet reads the live registry                                                                                                |
+| `rtl.spec.ts`           |      1 | Arabic: `dir=rtl`, board and sheet still render, **Western digits**, switch back                                                                                                       |
+| `workflow.spec.ts`      |      2 | Status add → rename → WIP limit across a reload; delete relocates its tasks via `moveTasksTo`                                                                                          |
+| `admin-nav.spec.ts`     |      3 | **The admin trap**: sidebar org row / brand mark / breadcrumb Home each escape `/admin/*`; the switcher is enabled + searchable; the palette carries Home + the admin rows             |
+| `admin-orgs.spec.ts`    |      2 | Create → switcher → rename → archive (typed gate) → archived toggle → restore; a duplicate slug gets `slug_taken`, not the refresh message                                             |
+| `admin-users.spec.ts`   |      2 | Provision WITH an org grant (one transaction) + the memberships dialog adds a second; anonymize-delete behind a typed-EMAIL gate                                                       |
+| `instance-mode.spec.ts` |      2 | Admin flips to single mode → switcher gone, `/` short-circuits, the orgs page explains itself; a two-org member lands in the default with no switcher                                  |
+| `analytics.spec.ts`     |      4 | Overview tiles carry numbers; a KPI drills and the back link returns; the range survives Work → Traffic (in-app); a facet narrows table + CSV; events-feed URL state survives a reload |
+| `theme-drawer.spec.ts`  |      4 | Three ways in + Escape; apply → save → reload → reset+save; over a LIVE board + the `/theme` hand-off; **reduced-motion smoke** (boots, opens, still drags)                            |
+| `view-as.spec.ts`       |      2 | Member view drops the console from sidebar + palette, refuses `/admin/*` IN PLACE with a Return button, narrows the switcher; the pill is the other way back                           |
+| **Total**               | **62** |                                                                                                                                                                                        |
 
 ### 6.8 Helpers
 
 `e2e/helpers/` — a helper may **arrange, never assert**.
 
-| Module           | Owns                                                                                               |
-| ---------------- | -------------------------------------------------------------------------------------------------- |
-| `env.ts`         | Repo-root `.env` → the e2e/dev/maintenance database URLs, ports, the API child's env               |
-| `database.ts`    | Provisioning, row counts, the seeded-admin-id probe                                                |
-| `api.ts`         | Authenticated client: envelope unwrap, 429 retry honouring `Retry-After`, session + lookup caching |
-| `app.ts`         | `signIn` (injects a session), `signInThroughForm`, the dnd-kit drag, toast + board locators        |
-| `seed.ts`        | What the seed contains, named once — accounts, project keys, statuses, WIP limit                   |
-| `rate-budget.ts` | The 300/minute gate (§6.5)                                                                         |
-| `test.ts`        | The `test` object every spec imports — attaches the budget automatically                           |
+| Module           | Owns                                                                                                                               |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `env.ts`         | Repo-root `.env` → the e2e/dev/maintenance database URLs, ports, the API child's env                                               |
+| `database.ts`    | Provisioning, row counts, the seeded-admin-id probe                                                                                |
+| `api.ts`         | Authenticated client: envelope unwrap, 429 retry honouring `Retry-After`, session + lookup caching                                 |
+| `app.ts`         | `signIn` (injects a session), `signInThroughForm`, `useLanguage` / `useMotionPreference`, the dnd-kit drag, toast + board locators |
+| `seed.ts`        | What the seed contains, named once — accounts, **both organizations**, project keys, statuses, WIP limit                           |
+| `rate-budget.ts` | The 300/minute gate (§6.5)                                                                                                         |
+| `test.ts`        | The `test` object every spec imports — attaches the budget automatically                                                           |
 
 Specs import `test`/`expect` from `../helpers/test`, **never** from
 `@playwright/test`: reaching past it silently opts that file out of the budget.
@@ -573,7 +664,29 @@ Specs import `test`/`expect` from `../helpers/test`, **never** from
   Every mutation is confirmed by a reload or an API read.
 - **Restore what you mutate**, or create-then-delete a uniquely-suffixed fixture.
   Each run re-seeds anyway, but a spec that leaves the seed as it found it can be
-  run twice inside one run and reasoned about alone.
+  run twice inside one run and reasoned about alone. Two domains have no hard
+  delete and the sweeper has to know it: an **organization** is archived
+  (`admin-orgs`, `view-as`) and an **account** is anonymized (`admin-users`),
+  which are the closest thing to a teardown either offers. Both are inert
+  afterwards — invisible to every switcher, deactivated, in no organization — so
+  neither can reach another spec.
+- **A globally shared row needs an unconditional `afterEach`.** There is exactly
+  one `instance_settings` row, so `instance-mode.spec` restores `orgMode: multi`
+  through the **API** (never the form) whether or not the test got that far. A
+  file that flipped the instance and failed on its way back would take the org
+  switcher away from `admin-nav`, turn `/` into a redirect for `smoke`, and do it
+  in whichever spec ran next.
+- **Prefer the grid kit's own testids to role + text.** The dashboard tables all
+  render through `components/dashboard/DataTable`, which stamps a stable contract:
+  `table-facet-<id>`, `table-facet-<id>-<value>`, `table-facet-<id>-clear`,
+  `table-range`, `table-page`, `table-column-<id>`, plus `stat-tile-<id>` /
+  `stat-value` and the analytics console's `analytics-kpi-<metric>`. Reaching for
+  role + visible text instead is what W3.1 had to unpick when the telemetry feed's
+  bespoke single-select combobox became a generic multi-select facet: the
+  assertion was unchanged, but every locator that named the old control had to be
+  rewritten. Sort headers are the deliberate exception — `aria-sort` on the
+  `<th>` **is** the contract, and asserting it is asserting the accessibility
+  semantics rather than a class name.
 - **`e2e#test` is never cached** (see `turbo.json` and §2.5): its result depends
   on process and database state that no input hash can observe, so a cached
   "pass" would be a replay rather than a run.
@@ -593,6 +706,26 @@ Specs import `test`/`expect` from `../helpers/test`, **never** from
 - **Ordinary requests write no pino line** — `requestLogger` batches to a table
   and the error handler only logs 5xx. The drawer's streaming test triggers a
   socket connection, which does log.
+- **The sidebar's org links depend on `fb-last-org-v1`.** `buildSections`
+  resolves them from `orgSlug ?? lastOrgSlug ?? defaultOrgSlug`, and on
+  `/admin/*` in a multi-org instance only the middle rung can answer. A spec that
+  opens the console in a brand-new context sees a Workspace section with **Home
+  and nothing else** — correct behaviour, and not the case `admin-nav.spec` is
+  about, which is why that file visits `/o/acme` first.
+- **The analytics range is in-memory, not in the URL.** `useAnalyticsStore` holds
+  it for the four dashboards, so it survives a `<Link>` and dies on a `goto`. The
+  detail page keeps its own local range on purpose. A "the range persisted" test
+  therefore has to click a nav row; a `page.goto` would silently assert the
+  default. (The events feed is the opposite: its state IS the query string.)
+- **`page_view` telemetry is spread over the trailing 14 days** with a recency
+  bias, so the feed's `24h` preset can legitimately be thin. Assert against
+  "All time" (its default) or against a `from=`-windowed API read, as
+  `admin.spec` does.
+- **The Theme Studio drawer is hand-rolled, not a Radix dialog** — deliberately,
+  so the app behind the scrim stays a live preview. It therefore gets none of
+  Radix's focus trapping or `aria-hidden` for free, and a spec must not assume
+  the background is inert: `theme-drawer.spec` asserts the opposite, that the
+  board keeps its DOM.
 
 ---
 

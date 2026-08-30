@@ -12,8 +12,9 @@ import {
 import type { LatencyBucket } from '@flowboard/shared';
 
 import ChartFrame from '@/components/reports/ChartFrame';
-import ReportCard from '@/components/reports/ReportCard';
 import ChartLegend from '@/components/reports/ChartLegend';
+import { PanelCard } from '@/components/dashboard/PanelCard';
+import { OPS_CHART_BODY } from '@/components/admin/ops-panel';
 import { ChartTooltipContent } from '@/components/reports/ChartTooltip';
 import {
   AXIS_TICK,
@@ -188,6 +189,12 @@ function LatencyLegend() {
  * "Empty" means no bucket in the window MEASURED anything — a window of nothing
  * but zero-filled buckets has no percentiles to draw, and three flat lines at
  * zero would be worse than saying so.
+ *
+ * A `PanelCard` since W3.1, for the reason spelled out in `RequestsChart`: the
+ * ops pages carry a KPI row, two plots and a table, so `ReportCard`'s fixed
+ * 16:10 aspect — right for a grid of six report tiles — sized the wrong thing
+ * here. {@link OPS_CHART_BODY} keeps this plot exactly as tall as the volume
+ * chart it sits beside.
  */
 export function LatencyCard({
   window,
@@ -202,7 +209,7 @@ export function LatencyCard({
   const hasData = buckets.some((entry) => entry.count > 0);
 
   return (
-    <ReportCard
+    <PanelCard
       title={t('admin:latency.title')}
       info={t('admin:latency.info')}
       caption={<LatencyLegend />}
@@ -212,9 +219,11 @@ export function LatencyCard({
       isEmpty={!hasData}
       emptyTitle={t('admin:latency.empty')}
       emptyMessage={t('admin:latency.emptyBody')}
+      bodyClassName={OPS_CHART_BODY}
+      testId="latency-card"
     >
       <LatencyChart buckets={buckets} bucket={bucket} />
-    </ReportCard>
+    </PanelCard>
   );
 }
 

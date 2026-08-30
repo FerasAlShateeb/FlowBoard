@@ -11,7 +11,7 @@
 //
 // Runtime-neutral: zod only, no DOM/Node globals.
 import { z } from 'zod';
-import { paginationQuerySchema, uuid } from './common';
+import { paginationQuerySchema, slugSchema, uuid } from './common';
 import { orgRoleSchema } from './orgs.schema';
 import {
   createUserInputSchema,
@@ -19,12 +19,70 @@ import {
   localeSchema,
   nameSchema,
   userListQuerySchema,
+  userSchema,
 } from './users.schema';
 import { VM_UPDATE_AT_LEAST_ONE_FIELD } from './validation-messages';
 
 /** `GET /admin/users?page&pageSize&q&isActive`. */
 export const adminUserListQuerySchema = paginationQuerySchema.extend(userListQuerySchema.shape);
 export type AdminUserListQuery = z.infer<typeof adminUserListQuerySchema>;
+
+/**
+ * One organization an account belongs to, as the admin user directory shows it.
+ *
+ * DENORMALIZED (name + slug, not just the id) because the memberships column
+ * renders a row of org chips and the membership dialog links to each org. The
+ * alternative — ids plus a client-side join against `GET /orgs` — makes the
+ * user table depend on a second query that a non-multi-org deployment may not
+ * even populate, and renders raw UUIDs for the beat before it resolves.
+ */
+export const adminUserMembershipSchema = z.object({
+  orgId: uuid,
+  orgName: nameSchema,
+  orgSlug: slugSchema,
+  role: orgRoleSchema,
+});
+export type AdminUserMembership = z.infer<typeof adminUserMembershipSchema>;
+
+/**
+ * A row of `GET /admin/users` — the account plus every organization it is in.
+ *
+ * WHY THE LIST CARRIES THIS AT ALL. "Which orgs is this person in?" is the
+ * question the admin directory exists to answer, and before this row existed
+ * `AdminUsersPage` hardcoded `orgMemberships: []` because nothing could tell
+ * it. Fetching per row is N+1 on a page that already paginates at 25; the list
+ * query joins once and the column is free.
+ *
+ * Empty is a real, common answer: a freshly provisioned global admin belongs to
+ * no organization, and the table must render "none" rather than a spinner.
+ */
+export const adminUserRowSchema = userSchema.extend({
+  memberships: z.array(adminUserMembershipSchema),
+});
+export type AdminUserRow = z.infer<typeof adminUserRowSchema>;
+
+/**
+ * `DELETE /admin/users/:userId` — the result of an ANONYMIZE-AND-DEACTIVATE.
+ *
+ * FlowBoard never hard-deletes an account. A user id is the author of comments,
+ * the actor on activity rows and the assignee of history that has to keep
+ * reading correctly; dropping the row would either cascade that history away or
+ * leave dangling references. So the row survives with its identity scrubbed —
+ * name becomes "Deleted user", the email is rewritten to a unique
+ * `deleted+<uuid>@flowboard.invalid` (the address column is unique, so it
+ * cannot simply be nulled), the avatar is cleared, `isActive` goes false and
+ * `token_version` is bumped, which revokes every live session immediately.
+ *
+ * The response returns the SCRUBBED row so the client can patch its cache in
+ * place instead of refetching, and `membershipsRemoved` so the confirmation can
+ * say what access was actually revoked — "removed from 3 organizations" is the
+ * part an admin needs to be able to double-check.
+ */
+export const deleteUserResponseSchema = z.object({
+  user: userSchema,
+  membershipsRemoved: z.number().int().nonnegative(),
+});
+export type DeleteUserResponse = z.infer<typeof deleteUserResponseSchema>;
 
 /** One org the new account is dropped into at provisioning time. */
 export const provisionMembershipSchema = z.object({

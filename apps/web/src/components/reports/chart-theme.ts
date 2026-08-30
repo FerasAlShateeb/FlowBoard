@@ -1,3 +1,7 @@
+import { useEffect, useRef } from 'react';
+
+import { prefersReducedMotion } from '@/lib/motion-policy';
+
 /**
  * The chart palette and the axis/grid furniture, as tokens.
  *
@@ -125,4 +129,104 @@ export const AREA_FILL_OPACITY = 0.55;
  */
 export function fillOpacityFor(style: 'filled' | 'line', base: number): number {
   return style === 'line' ? 0 : base;
+}
+
+/* ══ MOTION ═══════════════════════════════════════════════════════════════════
+ *
+ * Registry entry #6 (`lib/motion-registry.ts`). Recharts draws its series with a
+ * JS-driven `react-smooth` animation, which is immune to `index.css`'s
+ * `data-motion` gate the same way the `motion` library is — so the policy has to
+ * be read in JavaScript, here, and handed to Recharts as a prop.
+ *
+ * ── THE RULE: COLD LOADS ANIMATE, WARM REFRESHES DO NOT ────────────────────
+ *
+ * The six report charts previously hardcoded `isAnimationActive={false}`, which
+ * was the right call for the wrong reason: what makes a chart animation
+ * obnoxious is not the animation, it is REPLAYING it. The reports dashboard
+ * refetches on window focus and re-renders on every sprint-picker and
+ * range-picker change; a chart that redraws itself from zero each time turns a
+ * comparison into a wait.
+ *
+ * A first draw is different. It is the moment the reader has nothing to compare
+ * against yet, and 600ms of a line writing itself in is what tells them which
+ * direction the series runs before they have read a single tick label.
+ *
+ * So the flag is COLD, not "animation on" — see {@link useColdChart} for how a
+ * chart knows which one it is.
+ *
+ * ── THE ANALYTICS CONSOLE SHARES THIS PAIR ─────────────────────────────────
+ *
+ * `components/admin/analytics/MetricChart.tsx` hand-rolled the same firstRender
+ * ref against `prefersReducedMotion()` while W2.2 and W2.4 ran in parallel; W3.1
+ * pointed it here. That matters more on the console than on the reports
+ * dashboard, because the console has an opt-in 30-second auto-refresh — the
+ * exact case where "cold, not on" is the difference between a chart and a
+ * metronome.
+ */
+
+/**
+ * How long a cold chart takes to draw itself in.
+ *
+ * Deliberately NOT `--speed`. `--speed` (130ms) is the chrome-transition token:
+ * it paces hovers, colour changes and other movements the reader did not ask to
+ * watch. This one they did — it is the drawing of the data — and at 130ms a
+ * line chart's sweep is a flicker. Recharts' own default is 1500ms, which is
+ * long enough to be in the way of a dashboard you are scanning; 600ms is the
+ * span where the sweep still reads as direction rather than as a delay.
+ */
+export const CHART_ANIMATION_MS = 600;
+
+/**
+ * The animation props for one Recharts series.
+ *
+ * Spread onto every `<Line>` / `<Area>` / `<Bar>` / `<Scatter>`:
+ *
+ *     <Line {...chartAnimation(cold)} … />
+ *
+ * A plain function, not a hook, so it can be called once per chart and spread
+ * across three series without three subscriptions — and so it is assertable in
+ * a node-environment test without rendering Recharts into a zero-sized jsdom
+ * box. The reduced-motion branch is the `false` return: Recharts then paints the
+ * final geometry on the first frame, which is byte-for-byte the pre-Round-2
+ * behaviour.
+ *
+ * `animationDuration` is omitted entirely when inactive rather than set to 0 —
+ * an inactive series never reads it, and leaving it out keeps "we are not
+ * animating" a single unambiguous fact in the props rather than two that could
+ * disagree.
+ */
+export function chartAnimation(cold: boolean): {
+  isAnimationActive: boolean;
+  animationDuration?: number;
+} {
+  const active = cold && !prefersReducedMotion();
+  return active
+    ? { isAnimationActive: true, animationDuration: CHART_ANIMATION_MS }
+    : { isAnimationActive: false };
+}
+
+/**
+ * True on a chart's FIRST render, false on every render after it.
+ *
+ * "Cold" is defined as *this component instance has not painted yet*, and that
+ * is the honest definition on this dashboard: `ReportCard` only mounts its child
+ * once the query has data, so a mount IS a cold load, and every subsequent
+ * render of that instance is a refetch, a sprint change or a theme flip — all
+ * warm.
+ *
+ * The flip happens in an effect, which is load-bearing timing: the effect runs
+ * AFTER the commit that started Recharts' animation, and flipping a ref triggers
+ * no re-render of its own, so the cold animation is never interrupted by its own
+ * bookkeeping. The next render — the one caused by new data — is the first to
+ * see `false`, which is exactly the render that must not re-animate.
+ */
+export function useColdChart(): boolean {
+  const warm = useRef(false);
+  const cold = !warm.current;
+
+  useEffect(() => {
+    warm.current = true;
+  }, []);
+
+  return cold;
 }

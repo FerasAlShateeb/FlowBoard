@@ -12,6 +12,7 @@ import '@/stores/useThemeStore';
 
 import { initFaviconUpdater } from '@/components/theme/favicon-updater';
 import { getLangPref, initLangPolicy } from '@/lib/lang-policy';
+import { initMotionPolicy } from '@/lib/motion-policy';
 import { initI18n } from '@/i18n';
 import { router } from '@/routes';
 import AppProviders from '@/AppProviders';
@@ -22,6 +23,12 @@ import AppProviders from '@/AppProviders';
  *   1. `<html lang|dir>` — stamped from the persisted preference. Synchronous
  *      and first, so an Arabic session is already right-to-left while
  *      everything below is still loading.
+ *   1b. `<html data-motion>` — the same shape of decision, and for the same
+ *      reason it must be pre-paint: the CSS transitions the shell uses are gated
+ *      on this attribute, so stamping it after React mounted would let the first
+ *      route transition play at the wrong setting. Default is `full` and it
+ *      beats the OS; only an explicit `system` preference consults
+ *      `prefers-reduced-motion`. See `lib/motion-policy.ts`.
  *   2. Theme — applied by the side-effect import above, before this function
  *      even runs. No flash of the wrong palette.
  *   2b. Favicon — `initFaviconUpdater()` paints `<head>` from the theme that
@@ -38,9 +45,16 @@ import AppProviders from '@/AppProviders';
  * Steps 1 and 2 are deliberately independent of step 3: if the Arabic chunk
  * fails to load, the document is still in the right direction and the right
  * theme, and English (fully bundled, and the `fallbackLng`) carries the page.
+ *
+ * ── ROUND 2 FREEZE ──────────────────────────────────────────────────────────
+ * This entry point is a STITCH FILE. W1.0 added the one line Round 2 needs here
+ * (`initMotionPolicy()`), and W3.1 is the only package allowed to edit it
+ * again. W1.5 owns the motion policy MODULE and everything downstream of the
+ * stamp; it does not need to reopen this file.
  */
 async function bootstrap(): Promise<void> {
   initLangPolicy();
+  initMotionPolicy();
   initFaviconUpdater();
 
   try {

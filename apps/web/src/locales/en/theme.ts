@@ -15,6 +15,39 @@ export default {
   title: 'Theme Studio',
   subtitle: 'Colours, type and layout. Every change applies live — Save keeps it.',
 
+  /**
+   * The DRAWER — the quick surface, opened from the topbar's palette icon.
+   * `title` above names it (it is the Theme Studio); these are the strings only
+   * the slide-over needs.
+   */
+  studio: {
+    open: 'Theme Studio',
+    close: 'Close Theme Studio',
+    /** Names the three-tab strip for a screen reader. */
+    tabsLabel: 'Theme sections',
+    /** The Light/Dark row under the preset grid. */
+    appearance: 'Appearance',
+    advanced: 'Advanced editor',
+    advancedHint: 'Every token, a live preview and the import guard.',
+    /**
+     * The inline import panel's submit button. NOT `import.submit` ("Import"),
+     * which is the word already on the footer toggle two rows below it: two
+     * buttons called "Import" in one 380px panel are ambiguous to a screen
+     * reader and to anybody reading the drawer for the first time.
+     */
+    applyImport: 'Import theme',
+  },
+
+  /**
+   * `/theme` — the same studio at full size. Retitled in Round 2, when the
+   * drawer became the quick surface and the page became the deep one.
+   */
+  page: {
+    title: 'Advanced theme editor',
+    subtitle:
+      'Every colour token, a live preview and the import flow. For a quick palette or typeface change, open the Theme Studio from the topbar.',
+  },
+
   tabs: {
     colors: 'Colours',
     typography: 'Typography',

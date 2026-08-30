@@ -11,8 +11,9 @@ import {
 import type { RequestsBucket } from '@flowboard/shared';
 
 import ChartFrame from '@/components/reports/ChartFrame';
-import ReportCard from '@/components/reports/ReportCard';
 import ChartLegend from '@/components/reports/ChartLegend';
+import { PanelCard } from '@/components/dashboard/PanelCard';
+import { OPS_CHART_BODY } from '@/components/admin/ops-panel';
 import { ChartTooltipContent } from '@/components/reports/ChartTooltip';
 import {
   AREA_FILL_OPACITY,
@@ -43,11 +44,18 @@ import type { TelemetryBucket, TelemetryWindow } from './telemetry-range';
  * drops to the baseline for two hours IS the outage, whereas a series with
  * those buckets omitted draws a straight line over the top of it.
  *
- * ── EVERYTHING WAVE-3 ALREADY DECIDED IS REUSED ─────────────────────────────
- * `ChartFrame` (the `dir="ltr"` island, the `role="img"` summary), `ReportCard`
- * (error → loading → empty → chart), the `--chart-*` tokens and the tooltip.
+ * ── EVERYTHING ALREADY DECIDED IS REUSED ────────────────────────────────────
+ * `ChartFrame` (the `dir="ltr"` island, the `role="img"` summary), `PanelCard`
+ * (error → pending → empty → chart), the `--chart-*` tokens and the tooltip.
  * This chart makes no new visual decisions, which is the entire reason the two
  * dashboards look like one product.
+ *
+ * Round 1 built the tile on `components/reports/ReportCard`, which was the only
+ * shell that existed. W3.1 moved it to W1.4's `PanelCard`: the same ladder, but
+ * without `ReportCard`'s fixed 16:10 aspect — a ratio sized for a grid of six
+ * report tiles, not for an ops page that also carries a KPI row and a
+ * twenty-row table. The plot height is now stated explicitly and shared with
+ * the latency card through {@link OPS_CHART_BODY}.
  */
 export function RequestsChart({
   buckets,
@@ -160,7 +168,7 @@ export function RequestsCard({
   const buckets = query.data?.buckets ?? [];
 
   return (
-    <ReportCard
+    <PanelCard
       title={t('admin:requests.title')}
       info={t('admin:requests.info')}
       caption={<RequestsLegend />}
@@ -170,9 +178,11 @@ export function RequestsCard({
       isEmpty={buckets.length === 0}
       emptyTitle={t('admin:requests.empty')}
       emptyMessage={t('admin:requests.emptyBody')}
+      bodyClassName={OPS_CHART_BODY}
+      testId="requests-card"
     >
       <RequestsChart buckets={buckets} bucket={bucket} />
-    </ReportCard>
+    </PanelCard>
   );
 }
 

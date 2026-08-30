@@ -311,7 +311,7 @@ export class ApiClient {
   //
   // MEMOISED FOR THE WHOLE RUN, and only these three. The org, its projects and
   // a project's workflow columns are seeded rows that no spec mutates, and every
-  // one of the fifteen files opens by asking for them — that was ~80 requests
+  // one of the spec files opens by asking for them — that was ~80 requests
   // spent re-reading constants, against a 300-per-minute ceiling shared with the
   // browser. Anything a spec CAN change (tasks, sprints, notifications) is read
   // fresh every time, because a stale answer there would be a wrong assertion

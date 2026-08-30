@@ -392,3 +392,197 @@
     mask-image: radial-gradient(60rem 40rem at 50% 0%, black, transparent 75%);
   }
 }
+
+/*
+  ╔═══════════════════════════════════════════════════════════════════════════╗
+  ║  ROUND 2 · THE MOTION GATE LAYER (W1.5)                                   ║
+  ║  APPEND-ONLY, AND IT MUST STAY LAST IN THIS FILE.                         ║
+  ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  This block is the CSS half of `lib/motion-policy.ts`. Everything above it is
+  the token layer; everything here reads ONE attribute that the policy stamps on
+  `<html>` before React mounts:
+
+      <html data-motion="full">      ← the default, and it BEATS the OS
+      <html data-motion="reduced">   ← the user asked for less movement
+
+  WHY AN ATTRIBUTE AND NOT `@media (prefers-reduced-motion: reduce)`. A media
+  query cannot be overridden from inside the app, and the OS signal is a blunt
+  instrument — Windows' Accessibility → "Animation effects", some remote-desktop
+  sessions and some power-saving modes all assert it without the user ever
+  having asked FlowBoard for a quieter interface. The policy consults the OS
+  only when the user explicitly picks "Follow system" (see `MotionCard`), and
+  `data-motion` carries the RESOLVED answer, so this stylesheet never has to
+  care which input produced it.
+
+  ── THE TWO HALVES ──────────────────────────────────────────────────────────
+    §A `reduced` KILL rules  — for motion that already exists and must stop.
+    §B `full` OPT-IN rules   — for Round 2's own keyframes, which are declared
+                               ONLY under `full`, so `reduced` never starts
+                               them and there is nothing to remember to kill.
+  §B is the preferred shape for anything new. §A exists because `tw-animate-css`
+  and Tailwind's own `animate-pulse` ship their animations un-gated.
+
+  ── THREE MECHANICS THAT MAKE THIS WORK, IN ORDER OF SUBTLETY ───────────────
+
+  1. **This block is UNLAYERED, on purpose.** Tailwind v4 emits everything —
+     `theme`, `base`, `components`, `utilities` — inside `@layer`. An unlayered
+     rule beats every layered rule REGARDLESS of specificity, so these gates win
+     over `animate-in`/`animate-pulse` without a single `!important` and without
+     an arms race with utility specificity. Do not wrap this block in a layer,
+     and do not append anything after it: a later unlayered rule would take
+     the same precedence and could silently re-enable what is killed here.
+
+  2. **Every gate is wrapped in `:where(…)`, which contributes ZERO
+     specificity.** The gate is a switch, not a claim to win a cascade fight:
+     `:where(html[data-motion='full']) .fb-drawer-in` is exactly as specific as
+     a bare `.fb-drawer-in`, so a consumer can still override it with one class
+     of its own. Dropping `:where()` would add the gate's own compound
+     specificity to every rule below and quietly reorder that cascade.
+
+  3. **`--speed` is deliberately NOT touched here.** Chrome transitions run at
+     `--speed` (130 ms, sub-perceptual) and already have their own user control:
+     the Theme Studio's Layout tab exposes an `Instant` (0 ms) preset, which is
+     a real accessibility setting. It is also *unreachable* from this file —
+     `applyTheme()` writes `--speed` as an INLINE custom property on `<html>`,
+     and an inline style beats any stylesheet rule. Reduced motion therefore
+     governs ANIMATIONS (things that move on their own, on a timeline the user
+     did not start); transitions stay with the theme.
+*/
+
+/* ── §A · `reduced` — kill rules ────────────────────────────────────────────
+   Reduced motion removes MOVEMENT, never information. Nothing below hides an
+   element, shortens a label, or changes what is on screen. */
+
+/*
+  A1. The `tw-animate-css` enter/exit choreography on the hand-copied shadcn
+  primitives — dialog, sheet, drawer, popover, dropdown, select, tooltip.
+
+  `animate-in` / `animate-out` compile to `animation: enter|exit <duration> …`,
+  and the elements that carry them are exactly the Radix parts that hold BOTH a
+  `data-slot` (our primitives stamp one on every part) and a `data-state` (Radix
+  stamps `open`/`closed` on anything it animates). That pair is the narrowest
+  honest selector available: a class-based kill would have to name every escaped
+  `data-[state=open]:animate-in` variant by hand, and a bare `[data-state]`
+  would reach into third-party markup.
+
+  A duration FLOOR of 1ms, not `animation: none`: Radix's `Presence` keeps an
+  exiting node mounted until it sees `animationend`, so the animation must still
+  RUN — just imperceptibly. Killing the animation name outright is safe today
+  (Presence checks `animationName` first) but depends on an internal detail of
+  the library; a 1ms floor does not. Elements that match this selector without
+  an animation (a checked `select-item`, a `switch` thumb) are unaffected —
+  `animation-duration` on a non-animating element is inert.
+*/
+:where(html[data-motion='reduced']) [data-slot][data-state] {
+  animation-duration: 1ms;
+}
+
+/*
+  A2. Tailwind's `animate-pulse` — the skeleton breath.
+
+  Frozen, NOT hidden. `RouteSkeleton`, the `PanelCard` ladder and every table
+  skeleton use it to say "content is coming", and that message is information;
+  only the 2s opacity oscillation is movement. So the animation name is dropped
+  and the opacity is pinned at a static value inside the range the keyframes
+  sweep (1 → .5 → 1), which is what a paused pulse looks like anyway.
+
+  `animation-name` rather than the `animation` shorthand, so nothing else on the
+  element (delay, fill-mode, a second animation) is collateral damage.
+*/
+:where(html[data-motion='reduced']) .animate-pulse {
+  animation-name: none;
+  opacity: 0.72;
+}
+
+/*
+  A3. `animate-spin` IS DELIBERATELY NOT GATED. THIS IS THE ONE EXCEPTION.
+
+  A spinner is not decoration: it is the only thing on screen asserting that a
+  request is still in flight. Freezing it turns "working…" into "stuck", which
+  is a worse outcome for the user who asked for reduced motion than the rotation
+  they wanted to avoid. It is a small, steady, predictable rotation with no
+  translation and no flashing — the class of motion the reduced-motion contract
+  is least concerned with. Every `animate-spin` in the app is on a `Loader2`
+  inside a busy button, a `PageSpinner`, or a pending-state icon; there is no
+  decorative spin anywhere. If one is ever added, gate THAT, not this class.
+*/
+
+/* ── §B · `full` — opt-in animations (Round 2's own keyframes) ──────────────
+   Declared once at the top level (keyframes cannot be nested inside a
+   selector), then WIRED only under `full`. A `reduced` session never starts
+   them, so §A needs no matching kill rule and none can be forgotten. */
+
+/*
+  B1. `fb-badge-pop` — the notification bell's unread badge (applied by W2.4).
+
+  A single 260ms scale beat on a 16px badge, transform + opacity only (both
+  compositor properties, so it costs no layout). The overshoot easing is what
+  makes it read as "a new one just arrived" rather than "a number changed"; the
+  count itself is the information, and it is fully present at every frame.
+*/
+@keyframes fb-badge-pop {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.4;
+  }
+  55% {
+    transform: scale(1.18);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+:where(html[data-motion='full']) .fb-badge-pop {
+  animation: fb-badge-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1) 1;
+}
+
+/*
+  B2. `fb-drawer-in` / `fb-scrim-in` — the Theme Studio drawer (applied by W2.3).
+
+  An end-docked 380px panel and its scrim. Both run at `--speed`, so the drawer
+  is paced by the same token as every other piece of chrome and follows a Theme
+  Studio speed preset (including `Instant`, which collapses them to nothing)
+  for free.
+
+  THE SLIDE IS DIRECTION-AWARE. `translateX` is physical, and an end-docked
+  panel enters from the RIGHT under LTR and from the LEFT under RTL — so the
+  offset is a custom property the RTL rule flips, rather than two keyframe sets.
+  `<html dir>` is stamped by `lib/lang-policy` before first paint, and that rule
+  is intentionally OUTSIDE the motion gate: it describes geometry, not movement,
+  and must be correct even if the class is applied by something else later.
+*/
+@keyframes fb-drawer-in {
+  from {
+    transform: translateX(var(--fb-drawer-from, 100%));
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fb-scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+:where(html[dir='rtl']) .fb-drawer-in {
+  --fb-drawer-from: -100%;
+}
+
+:where(html[data-motion='full']) .fb-drawer-in {
+  animation: fb-drawer-in var(--speed) ease-out 1;
+}
+
+:where(html[data-motion='full']) .fb-scrim-in {
+  animation: fb-scrim-in var(--speed) ease-out 1;
+}

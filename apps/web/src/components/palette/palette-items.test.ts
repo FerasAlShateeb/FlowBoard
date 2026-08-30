@@ -8,6 +8,7 @@ import {
   fuzzyMatch,
   localizeItems,
   scopeFromPathname,
+  type PaletteContext,
   type PaletteItem,
   type PaletteLabelKey,
   type PaletteSectionKey,
@@ -22,6 +23,7 @@ import {
  */
 
 const ENGLISH: Record<string, string> = {
+  'common:nav.home': 'Home',
   'common:nav.board': 'Board',
   'common:nav.backlog': 'Backlog',
   'common:nav.roadmap': 'Roadmap',
@@ -35,9 +37,21 @@ const ENGLISH: Record<string, string> = {
   'common:nav.notifications': 'Notifications',
   'common:nav.profile': 'My profile',
   'common:nav.theme': 'Theme',
+  'common:nav.projectSettings': 'Project settings',
+  'common:nav.adminOverview': 'Overview',
+  'common:nav.adminOrgs': 'Organizations',
+  'common:nav.adminProjects': 'Projects',
   'common:nav.adminUsers': 'Users',
+  'common:nav.adminSettings': 'Instance settings',
+  'common:nav.analyticsEngagement': 'Engagement',
+  'common:nav.analyticsWork': 'Work',
+  'common:nav.analyticsTraffic': 'Traffic',
+  'common:nav.analyticsGrowth': 'Growth',
   'common:nav.adminTelemetry': 'Telemetry',
+  'common:nav.adminTelemetryEvents': 'Telemetry events',
+  'common:nav.adminTelemetryRequests': 'Request analytics',
   'palette:actions.createTask': 'Create task…',
+  'palette:actions.openThemeStudio': 'Open Theme Studio',
   'palette:actions.openDiagnostics': 'Open diagnostics',
   'palette:sections.project': 'Project',
   'palette:sections.organization': 'Organization',
@@ -53,12 +67,18 @@ function translator(
   return (key) => dictionary[key] ?? key;
 }
 
-const IN_PROJECT = { orgSlug: 'acme', projectKey: 'FLOW', isGlobalAdmin: false };
-const IN_ORG = { orgSlug: 'acme', projectKey: null, isGlobalAdmin: false };
-const NOWHERE = { orgSlug: null, projectKey: null, isGlobalAdmin: false };
+const IN_PROJECT: PaletteContext = { orgSlug: 'acme', projectKey: 'FLOW', effectiveAdmin: false };
+const IN_ORG: PaletteContext = { orgSlug: 'acme', projectKey: null, effectiveAdmin: false };
+const NOWHERE: PaletteContext = { orgSlug: null, projectKey: null, effectiveAdmin: false };
 
 function ids(items: readonly PaletteItem[]): string[] {
   return items.map((item) => item.id);
+}
+
+/** The `to` of a row, or null for the two verbs. */
+function pathOf(items: readonly PaletteItem[], id: string): string | null {
+  const action = items.find((item) => item.id === id)?.action;
+  return action?.kind === 'navigate' ? action.to : null;
 }
 
 describe('buildPaletteItems — context gates', () => {
@@ -118,10 +138,22 @@ describe('buildPaletteItems — context gates', () => {
   });
 
   it('shows them to a global admin', () => {
-    const list = ids(buildPaletteItems({ ...IN_PROJECT, isGlobalAdmin: true }));
+    const list = ids(buildPaletteItems({ ...IN_PROJECT, effectiveAdmin: true }));
     expect(list).toEqual(
       expect.arrayContaining(['admin-users', 'admin-telemetry', 'action-diagnostics']),
     );
+  });
+
+  it('always offers "Open Theme Studio", enabled, to everyone', () => {
+    // The drawer has no route, so the palette is the only place the navigation
+    // lane can carry it — and appearance is not an admin setting, not an org
+    // setting and not a project setting, so nothing may gate it.
+    for (const context of [NOWHERE, IN_ORG, IN_PROJECT]) {
+      const row = buildPaletteItems(context).find((item) => item.id === 'action-theme-studio');
+      expect(row).toBeDefined();
+      expect(row?.disabled).toBeUndefined();
+      expect(row?.action).toEqual({ kind: 'theme-studio' });
+    }
   });
 
   it('always offers "Create task", and disables it outside a project', () => {
@@ -133,11 +165,104 @@ describe('buildPaletteItems — context gates', () => {
   });
 
   it('gives every row a unique id and an absolute path', () => {
-    const items = buildPaletteItems({ ...IN_PROJECT, isGlobalAdmin: true });
+    const items = buildPaletteItems({ ...IN_PROJECT, effectiveAdmin: true });
     expect(new Set(ids(items)).size).toBe(items.length);
     for (const item of items) {
       if (item.action.kind === 'navigate') expect(item.action.to.startsWith('/')).toBe(true);
     }
+  });
+});
+
+/**
+ * The Round 2 fixes, asserted as the defects they close.
+ *
+ * Each of these was a real way to get stuck: on `/admin/users` the palette
+ * offered no organization and no way home, and its admin rows were gated on an
+ * org that route does not have.
+ */
+describe('buildPaletteItems — the admin trap', () => {
+  const ON_ADMIN = { orgSlug: null, projectKey: null } as const;
+
+  it('always offers Home, in every context', () => {
+    for (const context of [NOWHERE, IN_ORG, IN_PROJECT]) {
+      expect(ids(buildPaletteItems(context))).toContain('home');
+      expect(pathOf(buildPaletteItems(context), 'home')).toBe('/');
+    }
+  });
+
+  it('offers the admin rows on an org-LESS route — they are gated on the flag alone', () => {
+    const list = ids(buildPaletteItems({ ...ON_ADMIN, effectiveAdmin: true }));
+    expect(list).toEqual(
+      expect.arrayContaining([
+        'admin-overview',
+        'admin-orgs',
+        'admin-projects',
+        'admin-users',
+        'admin-settings',
+      ]),
+    );
+  });
+
+  it('offers every analytics destination, including the two orphaned telemetry pages', () => {
+    const list = ids(buildPaletteItems({ ...ON_ADMIN, effectiveAdmin: true }));
+    expect(list).toEqual(
+      expect.arrayContaining([
+        'analytics-engagement',
+        'analytics-work',
+        'analytics-traffic',
+        'analytics-growth',
+        'admin-telemetry',
+        'admin-telemetry-events',
+        'admin-telemetry-requests',
+      ]),
+    );
+    expect(
+      pathOf(buildPaletteItems({ ...ON_ADMIN, effectiveAdmin: true }), 'admin-telemetry-events'),
+    ).toBe('/admin/telemetry/events');
+  });
+
+  it('falls back to the remembered org when the URL has none', () => {
+    const items = buildPaletteItems({ ...ON_ADMIN, effectiveAdmin: true, lastOrgSlug: 'acme' });
+    expect(pathOf(items, 'org-home')).toBe('/o/acme');
+    expect(pathOf(items, 'org-members')).toBe('/o/acme/members');
+  });
+
+  it('falls back to the instance default when nothing is remembered', () => {
+    const items = buildPaletteItems({
+      ...ON_ADMIN,
+      effectiveAdmin: true,
+      defaultOrgSlug: 'globex',
+    });
+    expect(pathOf(items, 'org-home')).toBe('/o/globex');
+  });
+
+  it('prefers the URL, then the remembered org, then the default — in that order', () => {
+    const all = { lastOrgSlug: 'remembered', defaultOrgSlug: 'instance-default' };
+    expect(pathOf(buildPaletteItems({ ...IN_ORG, ...all }), 'org-home')).toBe('/o/acme');
+    expect(
+      pathOf(buildPaletteItems({ ...ON_ADMIN, effectiveAdmin: true, ...all }), 'org-home'),
+    ).toBe('/o/remembered');
+    expect(
+      pathOf(
+        buildPaletteItems({
+          ...ON_ADMIN,
+          effectiveAdmin: true,
+          defaultOrgSlug: 'instance-default',
+        }),
+        'org-home',
+      ),
+    ).toBe('/o/instance-default');
+  });
+
+  it('still refuses to mint an org row when no rung of the ladder resolves', () => {
+    expect(ids(buildPaletteItems(NOWHERE)).some((id) => id.startsWith('org-'))).toBe(false);
+  });
+
+  it('hides every admin row from an admin who is previewing as a member', () => {
+    // `effectiveAdmin: false` is what `isEffectiveGlobalAdmin()` returns then.
+    const list = ids(buildPaletteItems({ ...ON_ADMIN, effectiveAdmin: false }));
+    expect(list.some((id) => id.startsWith('admin-') || id.startsWith('analytics-'))).toBe(false);
+    expect(list).not.toContain('action-diagnostics');
   });
 });
 
@@ -180,7 +305,7 @@ describe('fuzzyMatch', () => {
 
 describe('filterPaletteItems', () => {
   const localized = localizeItems(
-    buildPaletteItems({ ...IN_PROJECT, isGlobalAdmin: true }),
+    buildPaletteItems({ ...IN_PROJECT, effectiveAdmin: true }),
     translator(ENGLISH),
   );
 

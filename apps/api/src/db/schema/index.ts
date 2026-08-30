@@ -8,6 +8,10 @@
 export * from './enums';
 export * from './users';
 export * from './orgs';
+// Deployment-level configuration. AFTER `./orgs` because `default_org_id`
+// references `organizations` — the reference itself is a lazy `() =>` thunk, but
+// keeping the declaration order honest costs nothing and reads correctly.
+export * from './instance-settings';
 export * from './teams';
 export * from './projects';
 export * from './workflow';

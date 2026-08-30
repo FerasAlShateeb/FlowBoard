@@ -301,10 +301,35 @@ key of §5.
 
 Routers are registered in `apps/api/src/routes/index.ts` and mounted once at
 `/api`. Mount order there is normative — **specific prefixes first, root-stacked
-routers last** — and three deliberate cross-mount overlaps
-(`/orgs/:orgId/search`, `/projects/:projectId/{tasks,sprints,reports}`, the three
-`/admin` mounts) are proven reachable by
+routers last** — and the deliberate cross-mount overlaps
+(`/orgs/:orgId/search`, `/projects/:projectId/{tasks,sprints,reports}`, and the
+`/admin` family) are proven reachable by
 `apps/api/src/routes/__tests__/router-mounting.test.ts`.
+
+### 2.6 The Round-2 routers
+
+Four routers were added above the org boundary, and their mount order is part of
+the normative ordering above: **every narrow `/admin/*` prefix must precede the
+bare `/admin` mount** (`adminLogsRouter`), or a later router swallows the
+earlier ones.
+
+| Router                 | Mount                  | Owns                                                                          |
+| ---------------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| `adminAnalyticsRouter` | `/api/admin/analytics` | Five domain reads — [analytics.md](./analytics.md) §2.                        |
+| `adminProjectsRouter`  | `/api/admin/projects`  | The cross-org project list.                                                   |
+| `adminSettingsRouter`  | `/api/admin/settings`  | `GET`/`PATCH` of the `instance_settings` singleton.                           |
+| `instanceConfigRouter` | `/api/instance`        | `GET /config` — the one instance read **any** authenticated session may make. |
+
+The first three apply `requireAuth, requireGlobalAdmin` **at the router level**,
+so a route added later cannot be born unguarded. `instanceConfigRouter` is
+`requireAuth` only, and that split is the point: every user needs to know whether
+the shell has an org switcher; only an admin may see or change the row behind
+that answer. Full treatment in [admin.md](./admin.md).
+
+`GET /api/orgs` gained two query parameters in the same wave — `?scope=member`
+(a pure narrowing of the global-admin branch, never a widening) and
+`?includeDeleted=1` (global-admin only, and it changes the row _shape_ the
+endpoint returns) — plus `POST /api/orgs/:orgId/restore`.
 
 ## 3. The layering rule, and its three exceptions
 
@@ -761,6 +786,14 @@ global keydown listener) is mounted **after** `{children}`, and is therefore a
 `useNavigate()`; it reads the location off the router object and takes navigation
 as a prop.
 
+`<ThemeStudioSlot/>` sits beside it, for the same reason and at the same price.
+A 380 px slide-over rendered from inside the `z-30` topbar would be trapped in
+the header's stacking context, where `z-[100]` means "above the other things in
+the topbar" and the sidebar would paint over it — so the drawer is a sibling of
+the app and its "Advanced editor" link pushes into the router **object**,
+injected as a `navigate` prop. Only its topbar _trigger_ is a slot. See
+[design-system.md](./design-system.md) §11.3.
+
 The React Query devtools are `import.meta.env.DEV ? lazy(() => import(…)) : null`
 **at module scope in that exact shape**. Vite replaces `import.meta.env.DEV` with
 the literal `false` in a production build, so Rollup drops the `lazy()` call and
@@ -794,6 +827,21 @@ graph and ships a ~230 KB chunk production never loads.
   are positional.
 - `apps/web/src/lib/chunk-recovery.ts` is side-effect imported here so its
   `vite:preloadError` listener exists before any lazy page can be requested.
+- **The `/admin/*` subtree is one guard group**, not eleven guarded routes:
+  `<RequireGlobalAdmin/>` wraps the five console pages, the three telemetry ops
+  pages and the four analytics dashboards plus the single
+  `/admin/analytics/:domain/:metric` drill-down. `/admin` itself is a
+  `<Navigate to="/admin/overview" replace/>`. There is exactly one drill-down
+  component in the app: what differs per metric is looked up in the registry, not
+  switched on in the router ([analytics.md](./analytics.md) §3).
+
+**Navigation is a data model, not a component tree.**
+`apps/web/src/components/navigation/nav.config.ts` is a pure module — no React,
+no i18next, no router — and `buildSections(scope)` feeds three surfaces that
+therefore cannot disagree: the sidebar, the breadcrumb trail, and the command
+palette. Its `resolveNavOrgSlug` ladder (`orgSlug ?? lastOrgSlug ??
+defaultOrgSlug`) is what keeps the workspace links real on an org-less route
+such as `/admin/users`. See [admin.md](./admin.md) §3.
 
 ### 7.4 Server state vs UI state
 
@@ -807,10 +855,24 @@ server data in Zustand.**
 | Session (`useAuthStore`), theme (`useThemeStore`), layout (`useLayoutStore`)                          | Zustand, persisted                                                   |
 | Board filters (`useBoardFilterStore`)                                                                 | Zustand, persisted per project                                       |
 | Palette (`usePaletteStore`), presence (`usePresenceStore`), diagnostics log tail (`useDiagLogsStore`) | Zustand, **not** persisted                                           |
+| The analytics console's shared window + its four domain payloads (`useAnalyticsStore`)                | Zustand, **not** persisted — the one sanctioned exception, below     |
 
 `usePresenceStore` and `useDiagLogsStore` deliberately have no `fb-*-v1` key:
 a rehydrated roster would paint people who left hours ago, and admin-only log
 lines have no business on disk.
+
+**`useAnalyticsStore` is the one place server data lives in Zustand, and it is a
+reasoned exception rather than a precedent.** The four analytics dashboards
+share one window and need to distinguish "I have never had data" from "I have
+last minute's data and am re-reading" — a **cold** slot renders a skeleton, a
+**warm** one keeps the previous numbers on screen while it refetches. TanStack
+Query's `isPending` is false during a background refetch, so a query-driven page
+cannot tell those two apart without a second piece of state anyway. The store
+holds `{ status, error, data, loadedKey }` per domain, keyed by the range
+**preset** rather than the resolved window. Everything else on those pages —
+including `/admin/overview`, which has no shared window — stays on TanStack
+Query. See [analytics.md](./analytics.md) §5.3 before copying the shape: it earns
+its keep only where a warm/cold distinction drives the render.
 
 ### 7.5 `apps/web/src/lib/api.ts` — the single HTTP chokepoint
 
@@ -869,33 +931,39 @@ set a rank change cannot have altered.
 
 ## 8. Critical files
 
-| File                                        | Why it matters                                                                |
-| ------------------------------------------- | ----------------------------------------------------------------------------- |
-| `packages/shared/src/index.ts`              | The contract barrel every package codes against.                              |
-| `packages/shared/src/envelope.ts`           | The one response shape; `ok`, `fail`, `envelopeSchema`.                       |
-| `packages/shared/src/rank.ts`               | Fractional indexing: `rankBetween`, `initialRanks`, `NEEDS_REBALANCE_LENGTH`. |
-| `apps/api/src/app.ts`                       | Normative middleware order; builds an app with no port and no database.       |
-| `apps/api/src/bootstrap.ts`                 | The only place the four injected persistence sinks are wired.                 |
-| `apps/api/src/middlewares/validate.ts`      | `validate()` + `getParsed()` — the layer's key idiom.                         |
-| `apps/api/src/middlewares/error-handler.ts` | The only error-envelope formatter in the codebase.                            |
-| `apps/api/src/db/schema/tasks.ts`           | Dual fractional-rank columns + the key indexes.                               |
-| `apps/api/src/utils/domain-events.ts`       | Decouples services from realtime + notifications.                             |
-| `apps/api/src/utils/rank-rebalance.ts`      | Authoritative rank computation + the in-transaction rebalance.                |
-| `apps/api/src/sockets/realtime-bridge.ts`   | Domain events → hydrated socket emits, with echo suppression in one helper.   |
-| `apps/api/src/sockets/socket-reads.ts`      | The socket layer's read path — documented layering exception #1.              |
-| `apps/web/src/main.tsx`                     | The boot order: dir/lang, theme, favicon, awaited i18n, render.               |
-| `apps/web/src/lib/query-keys.ts`            | The key factory optimistic DnD and socket sync depend on.                     |
-| `apps/web/src/lib/api.ts`                   | Envelope unwrap + zod parse + `X-Socket-Id` + single-flight refresh.          |
-| `apps/web/src/lib/board-cache.ts`           | The board's cache algebra, as pure functions.                                 |
+| File                                                         | Why it matters                                                                |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| `packages/shared/src/index.ts`                               | The contract barrel every package codes against.                              |
+| `packages/shared/src/envelope.ts`                            | The one response shape; `ok`, `fail`, `envelopeSchema`.                       |
+| `packages/shared/src/rank.ts`                                | Fractional indexing: `rankBetween`, `initialRanks`, `NEEDS_REBALANCE_LENGTH`. |
+| `apps/api/src/app.ts`                                        | Normative middleware order; builds an app with no port and no database.       |
+| `apps/api/src/bootstrap.ts`                                  | The only place the four injected persistence sinks are wired.                 |
+| `apps/api/src/middlewares/validate.ts`                       | `validate()` + `getParsed()` — the layer's key idiom.                         |
+| `apps/api/src/middlewares/error-handler.ts`                  | The only error-envelope formatter in the codebase.                            |
+| `apps/api/src/db/schema/tasks.ts`                            | Dual fractional-rank columns + the key indexes.                               |
+| `apps/api/src/utils/domain-events.ts`                        | Decouples services from realtime + notifications.                             |
+| `apps/api/src/utils/rank-rebalance.ts`                       | Authoritative rank computation + the in-transaction rebalance.                |
+| `apps/api/src/sockets/realtime-bridge.ts`                    | Domain events → hydrated socket emits, with echo suppression in one helper.   |
+| `apps/api/src/sockets/socket-reads.ts`                       | The socket layer's read path — documented layering exception #1.              |
+| `apps/web/src/main.tsx`                                      | The boot order: dir/lang, theme, favicon, awaited i18n, render.               |
+| `apps/web/src/lib/query-keys.ts`                             | The key factory optimistic DnD and socket sync depend on.                     |
+| `apps/web/src/lib/api.ts`                                    | Envelope unwrap + zod parse + `X-Socket-Id` + single-flight refresh.          |
+| `apps/web/src/lib/board-cache.ts`                            | The board's cache algebra, as pure functions.                                 |
+| `apps/api/src/db/schema/instance-settings.ts`                | The deployment singleton behind multi-org vs single-org.                      |
+| `apps/web/src/components/navigation/nav.config.ts`           | One nav model; sidebar, breadcrumbs and palette all read it.                  |
+| `apps/web/src/components/admin/analytics/metric-registry.ts` | Twenty metrics as data — no per-metric route, no per-metric page.             |
+| `apps/web/src/lib/motion-policy.ts`                          | `<html data-motion>`; the app's single answer to "should this animate?".      |
 
 ## Related docs
 
 - [coding-standards.md](./coding-standards.md) — naming, the lint gates, zod, transactions, storage keys.
 - [database.md](./database.md) — the Drizzle schema, soft deletes, migrations, the seed.
 - [auth.md](./auth.md) — the token model, `tokenVersion`, invites, the role matrix.
+- [admin.md](./admin.md) — instance settings, single-org mode, the nav shell, view-as-member.
+- [analytics.md](./analytics.md) — the metric registry and the five domain endpoints.
 - [realtime.md](./realtime.md) — the full room map, event tables and presence protocol.
 - [telemetry.md](./telemetry.md) · [diagnostics.md](./diagnostics.md) — the observability pair.
-- [i18n.md](./i18n.md) · [design-system.md](./design-system.md) — the presentation layer.
+- [i18n.md](./i18n.md) · [design-system.md](./design-system.md) · [motion.md](./motion.md) — the presentation layer.
 - [testing.md](./testing.md) — the test pyramid and what each layer owns.
 
 Back to [docs/INDEX.md](./INDEX.md) · [.agents/INDEX.md](../INDEX.md)

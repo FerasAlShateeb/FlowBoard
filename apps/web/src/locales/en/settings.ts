@@ -28,6 +28,35 @@ export default {
     memberSince: 'Member since {{date}}',
   },
 
+  /**
+   * The Motion card on `/me` — `lib/motion-policy`'s user-facing switch.
+   *
+   * The hints carry the whole argument for the three-way choice, so they are
+   * copy, not decoration: "Full" has to say that it wins over the OS, and
+   * "Reduced" has to promise that nothing disappears — otherwise the setting
+   * reads as "hide things", which is exactly what it does not do.
+   */
+  motion: {
+    title: 'Motion',
+    subtitle: 'How much the interface moves when it changes.',
+    label: 'Animation',
+    options: {
+      full: {
+        label: 'Full',
+        hint: 'Menus, panels and page changes animate. This is the default, even if your system asks for less.',
+      },
+      reduced: {
+        label: 'Reduced',
+        hint: 'Movement is removed. Nothing is hidden — loading placeholders and busy indicators stay.',
+      },
+      system: {
+        label: 'Follow system',
+        hint: 'Use this device’s own “reduce motion” accessibility setting, and follow it if it changes.',
+      },
+    },
+    deviceNote: 'Saved to this browser, not to your account.',
+  },
+
   /** The change-password card on `/me`. */
   password: {
     title: 'Password',

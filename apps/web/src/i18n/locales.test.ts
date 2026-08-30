@@ -138,6 +138,32 @@ describe('locale catalogs', () => {
     }
   });
 
+  /**
+   * The percentile ladder keeps its directional isolates (W3.2).
+   *
+   * `analytics:work.charts.cycleTime.percentiles` interpolates values that are
+   * themselves MIXED — a Western number then an Arabic unit ("190 ساعة") — next
+   * to Latin labels (`p50`). Inside an RTL paragraph the bidi algorithm pulls
+   * those apart and the line renders "190 p50 ساعة": three percentiles and
+   * three values with no visible pairing, which is worse than not showing them.
+   *
+   * `\u2068`…`\u2069` (FIRST STRONG ISOLATE / POP DIRECTIONAL ISOLATE) bind each
+   * label to its own value. They are invisible, so nothing on screen and no
+   * review of the diff will notice if a later tidy-up deletes them — this test
+   * is the only thing that will.
+   */
+  it('keeps the Arabic percentile ladder inside directional isolates', () => {
+    const value = ar.analytics.work.charts.cycleTime.percentiles;
+
+    for (const label of ['p50', 'p90', 'p95'] as const) {
+      expect(value).toContain(`\u2068${label} {{${label}}}\u2069`);
+    }
+    // Balanced: an unclosed isolate leaks into the rest of the paragraph.
+    const opens = [...value].filter((char) => char === '\u2068').length;
+    const closes = [...value].filter((char) => char === '\u2069').length;
+    expect([opens, closes]).toEqual([3, 3]);
+  });
+
   it('leaves no English string sitting in the Arabic catalog', () => {
     // A spot check on the namespaces this wave wrote: an untranslated value is
     // usually a copy-paste that never got replaced. A handful of values are

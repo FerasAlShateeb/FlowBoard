@@ -17,7 +17,16 @@ import ReportCard from './ReportCard';
 import ChartLegend from './ChartLegend';
 import { ChartTooltipContent } from './ChartTooltip';
 import { useChartFormat } from './chart-format';
-import { AXIS_TICK, CHART_CHROME, CHART_SERIES, DASH, PLOT_MARGIN, STROKE } from './chart-theme';
+import {
+  AXIS_TICK,
+  CHART_CHROME,
+  CHART_SERIES,
+  chartAnimation,
+  DASH,
+  PLOT_MARGIN,
+  STROKE,
+  useColdChart,
+} from './chart-theme';
 import { burndownHeadline } from './report-summaries';
 
 /**
@@ -36,6 +45,9 @@ import { burndownHeadline } from './report-summaries';
 export function BurndownChart({ days }: { days: readonly BurndownDay[] }) {
   const { t } = useTranslation(['reports']);
   const format = useChartFormat();
+  // Registry entry #6: a COLD load draws itself in, a warm refetch does not,
+  // and Reduced motion never does. One call, spread onto every series below.
+  const animation = chartAnimation(useColdChart());
   const headline = burndownHeadline(days);
 
   const summary = t('reports:burndown.summary', {
@@ -91,7 +103,7 @@ export function BurndownChart({ days }: { days: readonly BurndownDay[] }) {
             strokeDasharray={DASH.guide}
             dot={false}
             activeDot={false}
-            isAnimationActive={false}
+            {...animation}
           />
           <Line
             type="monotone"
@@ -100,7 +112,7 @@ export function BurndownChart({ days }: { days: readonly BurndownDay[] }) {
             strokeWidth={STROKE.data}
             dot={false}
             activeDot={{ r: 3, fill: CHART_SERIES.primary }}
-            isAnimationActive={false}
+            {...animation}
           />
         </LineChart>
       </ResponsiveContainer>

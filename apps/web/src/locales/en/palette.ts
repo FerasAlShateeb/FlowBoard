@@ -40,6 +40,7 @@ export default {
   /** The palette's own verbs — rows that do something instead of going somewhere. */
   actions: {
     createTask: 'Create task…',
+    openThemeStudio: 'Open Theme Studio',
     openDiagnostics: 'Open diagnostics',
   },
 
@@ -64,6 +65,7 @@ export default {
     openPalette: 'Open the command palette',
     cheatSheet: 'Show this list',
     createTask: 'Create a task in this project',
+    themeStudio: 'Open the Theme Studio',
 
     /** The registry's three buckets. */
     groups: {

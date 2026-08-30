@@ -1,12 +1,20 @@
 /**
  * `pnpm --filter @flowboard/api db:seed`
  *
- * Fills a freshly migrated database with a demo organization that makes EVERY
+ * Fills a freshly migrated database with demo organizations that make EVERY
  * FlowBoard view render non-empty: a board with cards in every column, a
  * backlog, a completed sprint (so velocity has a bar) next to an active one (so
  * burndown has a line), epics with children and date ranges (roadmap), tasks
  * with due dates in the past and the future (calendar + gantt), comments with a
  * mention, an activity stream, notifications, and two weeks of telemetry.
+ *
+ * TWO ORGANIZATIONS, not one. `acme` is the deep one — every view, every edge
+ * case, both workflow shapes. `globex` is the second TENANT, and it exists so
+ * that the surfaces which only make sense across organizations are not
+ * degenerate: the admin Organizations table, the cross-org Projects list, the
+ * org switcher, `?scope=member`, and the growth analytics domain all read a
+ * one-row database as if they were broken. It is deliberately smaller, younger
+ * and simpler than Acme so the two are distinguishable rows rather than a copy.
  *
  * DESIGN NOTES
  * - **Deterministic.** All randomness comes from one seeded LCG, so two runs
@@ -34,6 +42,7 @@ import {
   closeDb,
   comments,
   db,
+  instanceSettings,
   invites,
   labels,
   notifications,
@@ -279,6 +288,48 @@ const USER_SPECS: readonly UserSpec[] = [
   },
 ];
 
+/**
+ * Accounts that exist ONLY in the second organization.
+ *
+ * Kept out of {@link USER_SPECS} because that list doubles as Acme's membership
+ * roster (`USER_SPECS.map(spec => ({ orgId: acme.id, role: spec.orgRole }))`).
+ * Priya belongs to Globex and nowhere else, which is the state the admin user
+ * directory's memberships column and the cross-org filters need to have a
+ * meaningful row: an account whose org list is NOT "all of them".
+ *
+ * `orgRole` here means her role in GLOBEX.
+ */
+const GLOBEX_USER_SPECS: readonly UserSpec[] = [
+  {
+    key: 'priya',
+    email: 'priya@flowboard.dev',
+    name: 'Priya Raman',
+    password: MEMBER_PASSWORD,
+    isGlobalAdmin: false,
+    isActive: true,
+    locale: 'en',
+    orgRole: 'member',
+  },
+];
+
+/** Every account the seed creates, in insert order. */
+const ALL_USER_SPECS: readonly UserSpec[] = [...USER_SPECS, ...GLOBEX_USER_SPECS];
+
+/**
+ * Globex's membership: four accounts borrowed from Acme plus Priya.
+ *
+ * The OVERLAP is the point. `ada` is in both, so the org switcher has something
+ * to switch between; `nina` is a plain member of Acme and an ADMIN of Globex,
+ * which is the case that proves org roles are per-org rather than global.
+ */
+const GLOBEX_MEMBER_SPECS: ReadonlyArray<{ key: string; role: OrgRole }> = [
+  { key: 'ada', role: 'admin' },
+  { key: 'nina', role: 'admin' },
+  { key: 'liam', role: 'member' },
+  { key: 'tom', role: 'member' },
+  { key: 'priya', role: 'member' },
+];
+
 const TEAM_SPECS: ReadonlyArray<{
   readonly name: string;
   readonly description: string;
@@ -378,6 +429,28 @@ const CORE_LABELS: ReadonlyArray<{ name: string; color: string }> = [
   { name: 'dx', color: SEED_COLORS.slate },
 ];
 
+/**
+ * Globex's two projects both keep the DEFAULT three-column workflow.
+ *
+ * Acme already exercises the custom-workflow path (CORE's five columns, its
+ * transition whitelist and its WIP limit). The second organization exists to
+ * make the CROSS-ORG surfaces non-empty — the admin Organizations and Projects
+ * tables, the org switcher, the growth analytics domain — and giving it a second
+ * bespoke workflow would add setup nothing in Round 2 reads.
+ */
+const GLOBEX_LABELS: ReadonlyArray<{ name: string; color: string }> = [
+  { name: 'storefront', color: SEED_COLORS.pink },
+  { name: 'billing', color: SEED_COLORS.green },
+  { name: 'ops', color: SEED_COLORS.teal },
+  { name: 'compliance', color: SEED_COLORS.red },
+];
+
+const OPS_LABELS: ReadonlyArray<{ name: string; color: string }> = [
+  { name: 'logistics', color: SEED_COLORS.blue },
+  { name: 'vendor', color: SEED_COLORS.amber },
+  { name: 'reporting', color: SEED_COLORS.violet },
+];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Task copy
 // ─────────────────────────────────────────────────────────────────────────────
@@ -450,6 +523,36 @@ const CORE_TITLES: readonly string[] = [
   'Structured error envelope on every route',
   'Validation messages are not translated',
   'Seed script must fill every view',
+];
+
+const GX_TITLES: readonly string[] = [
+  'Guest checkout drops the cart on refresh',
+  'Product grid needs a skeleton state',
+  'Apply promo codes at the basket level',
+  'Address autocomplete for the shipping form',
+  'Stock badge lies when a variant sells out',
+  'Split the payment step into its own route',
+  'Order confirmation email template',
+  'Wishlist sync across devices',
+  'Search facets for size and colour',
+  'Currency switcher rounds the wrong way',
+  'Recently viewed rail on the home page',
+  'Accessible focus order in the basket drawer',
+  'Cache the category tree at the edge',
+  'Refund flow for a partially shipped order',
+];
+
+const OPS_TITLES: readonly string[] = [
+  'Warehouse pick list export',
+  'Courier webhook retries forever on a 500',
+  'Daily stock reconciliation job',
+  'Vendor onboarding checklist',
+  'Returns dashboard for the support team',
+  'Label printer times out over VPN',
+  'Forecast restock dates per SKU',
+  'Nightly finance reconciliation report',
+  'Audit trail for manual stock adjustments',
+  'Escalation rota for out-of-hours incidents',
 ];
 
 const SUBTASK_TITLES: readonly string[] = [
@@ -655,14 +758,14 @@ async function seed(tx: Tx): Promise<SeedSummary> {
   // Two distinct passwords, two scrypt runs — hashing nine times would add
   // roughly a second for no benefit.
   const hashByPassword = new Map<string, string>();
-  for (const password of new Set(USER_SPECS.map((spec) => spec.password))) {
+  for (const password of new Set(ALL_USER_SPECS.map((spec) => spec.password))) {
     hashByPassword.set(password, await hashPassword(password));
   }
 
   const userRows = await tx
     .insert(users)
     .values(
-      USER_SPECS.map((spec) => ({
+      ALL_USER_SPECS.map((spec) => ({
         email: spec.email,
         passwordHash: requireEntry(hashByPassword, spec.password, 'password hash'),
         name: spec.name,
@@ -675,14 +778,14 @@ async function seed(tx: Tx): Promise<SeedSummary> {
 
   const userIdByEmail = new Map(userRows.map((row) => [row.email, row.id]));
   const userIdByKey = new Map(
-    USER_SPECS.map((spec) => [spec.key, requireEntry(userIdByEmail, spec.email, 'user id')]),
+    ALL_USER_SPECS.map((spec) => [spec.key, requireEntry(userIdByEmail, spec.email, 'user id')]),
   );
-  const userNameByKey = new Map(USER_SPECS.map((spec) => [spec.key, spec.name]));
+  const userNameByKey = new Map(ALL_USER_SPECS.map((spec) => [spec.key, spec.name]));
   const userId = (key: string): string => requireEntry(userIdByKey, key, 'user');
   detail(`${userRows.length} users`);
 
-  // ── Organization, teams, invites ─────────────────────────────────────────
-  step('organization, teams and invites');
+  // ── Organizations, teams, invites ────────────────────────────────────────
+  step('organizations, teams and invites');
   const [org] = await tx
     .insert(organizations)
     .values({
@@ -696,11 +799,48 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     throw new Error('seed: organization insert returned nothing');
   }
 
+  /**
+   * The SECOND organization.
+   *
+   * Round 2's whole instance-administration surface — the admin Organizations
+   * table, the cross-org Projects list, the growth analytics domain, the org
+   * switcher as a searchable combobox — is indistinguishable from broken on a
+   * one-org database: a table with a single row cannot show that filtering,
+   * sorting or scoping works, and "orgs created over time" is a flat line. Globex
+   * is deliberately SMALLER and YOUNGER than Acme (fewer people, no teams, no
+   * custom workflow) so the two are visibly different rows rather than a copy.
+   *
+   * It is also created a fortnight after Acme so `orgsCreatedSeries` has two
+   * distinct buckets instead of one.
+   */
+  const [globex] = await tx
+    .insert(organizations)
+    .values({
+      slug: 'globex',
+      name: 'Globex Corp',
+      description: 'A second tenant, so every cross-organization surface has more than one row.',
+      createdById: userId('ada'),
+      createdAt: addDays(now, -45),
+      updatedAt: addDays(now, -45),
+    })
+    .returning();
+  if (!globex) {
+    throw new Error('seed: second organization insert returned nothing');
+  }
+
   await tx
     .insert(orgMembers)
     .values(
       USER_SPECS.map((spec) => ({ orgId: org.id, userId: userId(spec.key), role: spec.orgRole })),
     );
+
+  await tx.insert(orgMembers).values(
+    GLOBEX_MEMBER_SPECS.map((spec) => ({
+      orgId: globex.id,
+      userId: userId(spec.key),
+      role: spec.role,
+    })),
+  );
 
   const teamRows = await tx
     .insert(teams)
@@ -717,7 +857,9 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     })),
   );
   await tx.insert(teamMembers).values(teamMemberRows);
-  detail(`1 organization, ${teamRows.length} teams, ${teamMemberRows.length} team memberships`);
+  detail(
+    `2 organizations (acme, globex), ${teamRows.length} teams, ${teamMemberRows.length} team memberships`,
+  );
 
   // ── Projects ─────────────────────────────────────────────────────────────
   step('projects, workflow, labels and sprints');
@@ -744,9 +886,42 @@ async function seed(tx: Tx): Promise<SeedSummary> {
       },
     ])
     .returning({ id: projects.id, key: projects.key });
-  const projectIdByKey = new Map(projectRows.map((row) => [row.key, row.id]));
+
+  const globexProjectRows = await tx
+    .insert(projects)
+    .values([
+      {
+        orgId: globex.id,
+        key: 'GX',
+        name: 'Globex Storefront',
+        description: 'Customer-facing commerce. Default three-column workflow.',
+        leadId: userId('nina'),
+        // Token NAMES, from the same palette `SEED_COLORS` is keyed by —
+        // `avatar_color` is chrome, not user data (see database.md).
+        avatarColor: 'violet',
+        createdAt: addDays(now, -44),
+        updatedAt: addDays(now, -44),
+      },
+      {
+        orgId: globex.id,
+        key: 'OPS',
+        name: 'Globex Operations',
+        description: 'Warehouse, couriers and the reporting behind them.',
+        leadId: userId('tom'),
+        avatarColor: 'amber',
+        createdAt: addDays(now, -38),
+        updatedAt: addDays(now, -38),
+      },
+    ])
+    .returning({ id: projects.id, key: projects.key });
+
+  const projectIdByKey = new Map(
+    [...projectRows, ...globexProjectRows].map((row) => [row.key, row.id]),
+  );
   const flowId = requireEntry(projectIdByKey, 'FLOW', 'project');
   const coreId = requireEntry(projectIdByKey, 'CORE', 'project');
+  const gxId = requireEntry(projectIdByKey, 'GX', 'project');
+  const opsId = requireEntry(projectIdByKey, 'OPS', 'project');
 
   const projectMemberSpecs: ReadonlyArray<{
     projectId: string;
@@ -766,6 +941,17 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     { projectId: coreId, key: 'tom', role: 'member' },
     { projectId: coreId, key: 'omar', role: 'member' },
     { projectId: coreId, key: 'yuki', role: 'viewer' },
+    // Globex. Only its own members — a project-member row for someone outside
+    // the organization would be access the org-scoped guards can never grant,
+    // and the admin Projects table's member counts would then not add up.
+    { projectId: gxId, key: 'ada', role: 'admin' },
+    { projectId: gxId, key: 'nina', role: 'admin' },
+    { projectId: gxId, key: 'liam', role: 'member' },
+    { projectId: gxId, key: 'priya', role: 'member' },
+    { projectId: opsId, key: 'nina', role: 'admin' },
+    { projectId: opsId, key: 'tom', role: 'member' },
+    { projectId: opsId, key: 'liam', role: 'member' },
+    { projectId: opsId, key: 'priya', role: 'viewer' },
   ];
   await tx.insert(projectMembers).values(
     projectMemberSpecs.map((spec) => ({
@@ -804,6 +990,61 @@ async function seed(tx: Tx): Promise<SeedSummary> {
       invitedById: userId('ada'),
       expiresAt: addDays(now, -2),
     },
+    /**
+     * Globex's four, two of them ACCEPTED.
+     *
+     * `accepted_at` / `accepted_by_id` are what the growth analytics domain
+     * counts: `invitesSentSeries`, `invitesAcceptedSeries` and the acceptance
+     * rate between them. Acme's three invites are all outstanding by design (the
+     * invite LIST needs a row in every state), so without these the acceptance
+     * rate on a freshly seeded database is a flat zero and the chart says
+     * nothing.
+     *
+     * Both accepted rows point at accounts that really are Globex members, so
+     * the invite list and the member list agree with each other.
+     */
+    {
+      orgId: globex.id,
+      token: 'seed-invite-globex-accepted-0001',
+      email: 'priya@flowboard.dev',
+      orgRole: 'member',
+      invitedById: userId('ada'),
+      expiresAt: addDays(now, -33),
+      acceptedAt: addDays(now, -38),
+      acceptedById: userId('priya'),
+      createdAt: addDays(now, -40),
+    },
+    {
+      orgId: globex.id,
+      token: 'seed-invite-globex-accepted-0002',
+      email: 'tom@flowboard.dev',
+      orgRole: 'member',
+      invitedById: userId('nina'),
+      expiresAt: addDays(now, -15),
+      acceptedAt: addDays(now, -19),
+      acceptedById: userId('tom'),
+      createdAt: addDays(now, -22),
+    },
+    {
+      orgId: globex.id,
+      token: 'seed-invite-globex-open-000000003',
+      email: null,
+      orgRole: 'member',
+      invitedById: userId('nina'),
+      expiresAt: addDays(now, 10),
+      createdAt: addDays(now, -4),
+    },
+    {
+      orgId: globex.id,
+      token: 'seed-invite-globex-stale-00000004',
+      email: 'supplier@example.com',
+      orgRole: 'member',
+      projectId: opsId,
+      projectRole: 'viewer',
+      invitedById: userId('tom'),
+      expiresAt: addDays(now, -3),
+      createdAt: addDays(now, -17),
+    },
   ]);
 
   // ── Statuses, transitions, labels ────────────────────────────────────────
@@ -826,6 +1067,19 @@ async function seed(tx: Tx): Promise<SeedSummary> {
         position: index,
         wipLimit: spec.wipLimit,
       })),
+      // Globex: the default workflow, twice, and no transition rows — an empty
+      // whitelist means every move is legal, which is what a default project
+      // must feel like.
+      ...[gxId, opsId].flatMap((projectId) =>
+        FLOW_STATUSES.map((spec, index) => ({
+          projectId,
+          name: spec.name,
+          category: spec.category,
+          color: spec.color,
+          position: index,
+          wipLimit: spec.wipLimit,
+        })),
+      ),
     ])
     .returning({ id: statuses.id, projectId: statuses.projectId, name: statuses.name });
 
@@ -852,6 +1106,8 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     .values([
       ...FLOW_LABELS.map((spec) => ({ projectId: flowId, name: spec.name, color: spec.color })),
       ...CORE_LABELS.map((spec) => ({ projectId: coreId, name: spec.name, color: spec.color })),
+      ...GLOBEX_LABELS.map((spec) => ({ projectId: gxId, name: spec.name, color: spec.color })),
+      ...OPS_LABELS.map((spec) => ({ projectId: opsId, name: spec.name, color: spec.color })),
     ])
     .returning({ id: labels.id, projectId: labels.projectId, name: labels.name });
 
@@ -895,6 +1151,34 @@ async function seed(tx: Tx): Promise<SeedSummary> {
         endDate: isoDate(addDays(now, 9)),
         startedAt: addDays(now, -5),
       },
+      {
+        projectId: gxId,
+        name: 'GX Sprint 4',
+        goal: 'Basket and promo codes.',
+        state: 'completed' as const,
+        startDate: isoDate(addDays(now, -25)),
+        endDate: isoDate(addDays(now, -11)),
+        startedAt: addDays(now, -25),
+        completedAt: addDays(now, -11),
+      },
+      {
+        projectId: gxId,
+        name: 'GX Sprint 5',
+        goal: 'Checkout rebuild, phase one.',
+        state: 'active' as const,
+        startDate: isoDate(addDays(now, -4)),
+        endDate: isoDate(addDays(now, 10)),
+        startedAt: addDays(now, -4),
+      },
+      {
+        projectId: opsId,
+        name: 'OPS Sprint 2',
+        goal: 'Courier webhooks and the returns dashboard.',
+        state: 'active' as const,
+        startDate: isoDate(addDays(now, -6)),
+        endDate: isoDate(addDays(now, 8)),
+        startedAt: addDays(now, -6),
+      },
     ])
     .returning({ id: sprints.id, projectId: sprints.projectId, name: sprints.name });
   const sprintIdByName = new Map(sprintRows.map((row) => [row.name, row.id]));
@@ -919,19 +1203,45 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     ),
     sprintIdByName,
   };
+  /** Both Globex projects run the default workflow, so they share its shape. */
+  const globexContext = (id: string, key: string): ProjectContext => ({
+    id,
+    key,
+    statusIdByName: new Map(FLOW_STATUSES.map((s) => [s.name, statusIdFor(id, s.name)])),
+    categoryByStatusName: new Map(FLOW_STATUSES.map((s) => [s.name, s.category])),
+    labelIdByName: new Map(
+      labelRows.filter((row) => row.projectId === id).map((row) => [row.name, row.id]),
+    ),
+    sprintIdByName,
+  });
+  const gxContext = globexContext(gxId, 'GX');
+  const opsContext = globexContext(opsId, 'OPS');
   detail(
-    `2 projects, ${statusRows.length} statuses, ${CORE_TRANSITIONS.length} transitions, ${labelRows.length} labels, ${sprintRows.length} sprints`,
+    `4 projects, ${statusRows.length} statuses, ${CORE_TRANSITIONS.length} transitions, ${labelRows.length} labels, ${sprintRows.length} sprints`,
   );
 
   // ── Task drafts ──────────────────────────────────────────────────────────
   step('tasks');
-  const drafts: TaskDraft[] = [...buildFlowDrafts(random, now), ...buildCoreDrafts(random, now)];
+  // Acme FIRST, and the order matters: the generator is one seeded LCG, so
+  // appending Globex leaves every Acme draw — and therefore every Acme row —
+  // byte-identical to what this seed produced before the second org existed.
+  const acmeDrafts: TaskDraft[] = [
+    ...buildFlowDrafts(random, now),
+    ...buildCoreDrafts(random, now),
+  ];
+  const globexDrafts: TaskDraft[] = [
+    ...buildGlobexStorefrontDrafts(random, now),
+    ...buildGlobexOpsDrafts(random, now),
+  ];
+  const drafts: TaskDraft[] = [...acmeDrafts, ...globexDrafts];
 
   const boardRank = createRankAllocator();
   const backlogRank = createRankAllocator();
   const contextByProjectKey = new Map<string, ProjectContext>([
     ['FLOW', flowContext],
     ['CORE', coreContext],
+    ['GX', gxContext],
+    ['OPS', opsContext],
   ]);
   const taskIdByLocalId = new Map<string, string>();
 
@@ -999,7 +1309,7 @@ async function seed(tx: Tx): Promise<SeedSummary> {
       taskIdByLocalId.set(draft.localId, row.id);
     }
   }
-  detail(`${drafts.length} tasks`);
+  detail(`${drafts.length} tasks (${acmeDrafts.length} acme, ${globexDrafts.length} globex)`);
 
   const taskId = (localId: string): string => requireEntry(taskIdByLocalId, localId, 'task');
 
@@ -1016,13 +1326,30 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     await tx.insert(taskLabels).values(taskLabelRows);
   }
 
+  /**
+   * Who may be added as an EXTRA watcher, per project.
+   *
+   * Scoped to the project's own organization: a watcher outside the org would be
+   * notified about work the guards would then refuse to show them, which reads
+   * as a broken notification rather than as seed data. Acme's pool is the
+   * original list, unchanged, so its rows are untouched by the second org.
+   */
+  const watcherPoolByProjectKey = new Map<string, readonly string[]>([
+    ['FLOW', ['maya', 'sara', 'nina', 'tom', 'liam', 'omar']],
+    ['CORE', ['maya', 'sara', 'nina', 'tom', 'liam', 'omar']],
+    ['GX', ['ada', 'nina', 'liam', 'priya']],
+    ['OPS', ['nina', 'tom', 'liam', 'priya']],
+  ]);
+
   const watcherRows = drafts.flatMap((draft) => {
     const keys = new Set<string>([draft.reporterKey]);
     if (draft.assigneeKey !== null) {
       keys.add(draft.assigneeKey);
     }
     if (random.chance(0.35)) {
-      keys.add(random.pick(['maya', 'sara', 'nina', 'tom', 'liam', 'omar']));
+      keys.add(
+        random.pick(requireEntry(watcherPoolByProjectKey, draft.projectKey, 'watcher pool')),
+      );
     }
     return [...keys].map((key) => ({
       taskId: taskId(draft.localId),
@@ -1078,7 +1405,7 @@ async function seed(tx: Tx): Promise<SeedSummary> {
   // ── Comments (one carries a mention) ─────────────────────────────────────
   step('comments');
   const commentableDrafts = random
-    .shuffle(drafts.filter((draft) => draft.type !== 'epic'))
+    .shuffle(acmeDrafts.filter((draft) => draft.type !== 'epic'))
     .slice(0, 18);
   const commentRows: NewCommentRow[] = [];
   const authorKeys = ['maya', 'sara', 'nina', 'tom', 'liam', 'omar'] as const;
@@ -1090,6 +1417,26 @@ async function seed(tx: Tx): Promise<SeedSummary> {
       commentRows.push({
         taskId: taskId(draft.localId),
         authorId: userId(random.pick(authorKeys)),
+        body: random.pick(COMMENT_BODIES),
+        createdAt,
+        updatedAt: createdAt,
+      });
+    }
+  }
+
+  // Globex gets its own, smaller thread set — from ITS OWN members, so a task's
+  // comment authors are all people who can actually see the task.
+  const globexCommentable = random
+    .shuffle(globexDrafts.filter((draft) => draft.type !== 'epic'))
+    .slice(0, 7);
+  const globexAuthorKeys = ['nina', 'tom', 'liam', 'priya', 'ada'] as const;
+  for (const draft of globexCommentable) {
+    const howMany = random.int(1, 2);
+    for (let i = 0; i < howMany; i += 1) {
+      const createdAt = between(random, draft.createdAt, now);
+      commentRows.push({
+        taskId: taskId(draft.localId),
+        authorId: userId(random.pick(globexAuthorKeys)),
         body: random.pick(COMMENT_BODIES),
         createdAt,
         updatedAt: createdAt,
@@ -1113,10 +1460,12 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     updatedAt: addDays(now, -1),
   });
 
-  const insertedComments = await tx
-    .insert(comments)
-    .values(commentRows)
-    .returning({ id: comments.id, taskId: comments.taskId, createdAt: comments.createdAt });
+  const insertedComments = await tx.insert(comments).values(commentRows).returning({
+    id: comments.id,
+    taskId: comments.taskId,
+    authorId: comments.authorId,
+    createdAt: comments.createdAt,
+  });
   const mentionCommentId = insertedComments[insertedComments.length - 1]?.id;
   detail(`${insertedComments.length} comments (1 with an @mention)`);
 
@@ -1187,7 +1536,11 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     activityRows.push({
       projectId: context.id,
       taskId: comment.taskId,
-      actorId: userId('maya'),
+      // The comment's OWN author. This used to be hardcoded to `maya`, which was
+      // harmless while every seeded comment lived in Acme and became a lie the
+      // moment a second organization got threads of its own — a project feed
+      // attributing a Globex comment to someone who cannot see the project.
+      actorId: comment.authorId,
       // `comment.ADDED`, matching the shared `activityActionSchema` — which is
       // what `GET /projects/:id/activity` parses every row through. This row
       // said `comment.created` (the SOCKET event's name, a different namespace)
@@ -1346,6 +1699,36 @@ async function seed(tx: Tx): Promise<SeedSummary> {
       createdAt,
     });
   }
+
+  /**
+   * Globex's share of the product analytics.
+   *
+   * Fewer events than Acme, on purpose: the growth domain's `byOrg` table and
+   * every "which tenant is busiest?" question need the two organizations to be
+   * DIFFERENT sizes, and two orgs with identical traffic prove a chart renders
+   * without proving it discriminates. Attributed with `org_id`, which is the
+   * column those aggregations group by — an event with a null org is invisible
+   * to them.
+   */
+  const globexActiveUserKeys = GLOBEX_MEMBER_SPECS.map((spec) => spec.key);
+  for (let i = 0; i < 60; i += 1) {
+    const dayOffset = -Math.floor(Math.pow(random.next(), 1.5) * 14);
+    const createdAt = addMinutes(addDays(now, dayOffset), random.int(-600, 600));
+    const type = random.pick(TELEMETRY_TYPES);
+    telemetryRows.push({
+      type,
+      userId: random.chance(0.9) ? userId(random.pick(globexActiveUserKeys)) : null,
+      orgId: globex.id,
+      projectId: random.chance(0.7) ? random.pick([gxId, opsId]) : null,
+      payload:
+        type === 'page_view'
+          ? { path: random.pick(['/board', '/backlog', '/table', '/dashboard']) }
+          : { source: 'seed' },
+      sessionId: `seed-session-globex-${random.int(1, 8)}`,
+      createdAt,
+    });
+  }
+
   for (const batch of chunk(telemetryRows, INSERT_CHUNK)) {
     await tx.insert(telemetryEvents).values(batch);
   }
@@ -1400,6 +1783,8 @@ async function seed(tx: Tx): Promise<SeedSummary> {
   for (const [key, projectId] of [
     ['FLOW', flowId],
     ['CORE', coreId],
+    ['GX', gxId],
+    ['OPS', opsId],
   ] as const) {
     const highest = drafts
       .filter((draft) => draft.projectKey === key)
@@ -1428,6 +1813,13 @@ async function seed(tx: Tx): Promise<SeedSummary> {
     },
     { name: 'FLOW Sprint 2', committed: pointsIn('FLOW Sprint 2', false), completed: null },
     { name: 'CORE Sprint 7', committed: pointsIn('CORE Sprint 7', false), completed: null },
+    {
+      name: 'GX Sprint 4',
+      committed: pointsIn('GX Sprint 4', false) + 3,
+      completed: pointsIn('GX Sprint 4', true),
+    },
+    { name: 'GX Sprint 5', committed: pointsIn('GX Sprint 5', false), completed: null },
+    { name: 'OPS Sprint 2', committed: pointsIn('OPS Sprint 2', false), completed: null },
   ];
   for (const stamp of sprintStamps) {
     await tx
@@ -1436,14 +1828,41 @@ async function seed(tx: Tx): Promise<SeedSummary> {
       .where(eq(sprints.id, requireEntry(sprintIdByName, stamp.name, 'sprint')));
   }
 
+  // ── Instance settings ────────────────────────────────────────────────────
+  /**
+   * The deployment singleton, written EXPLICITLY rather than left to migration
+   * `0001`'s backfill.
+   *
+   * The seed's contract is "this transaction produces the whole demo dataset",
+   * and a row that only exists because a migration put it there is a row this
+   * script cannot describe, cannot count in its summary, and could not change if
+   * the demo wanted a different default. `onConflictDoUpdate` because the
+   * migration DID insert it on a normal `db:reset && db:seed`, and the seed
+   * must state the values rather than inherit whatever was already there.
+   *
+   * `multi` with no default org is the shipped shape: both organizations are
+   * visible, the switcher renders, and W3.1 flips this one row to walk the
+   * single-org path end to end.
+   */
+  step('instance settings');
+  await tx
+    .insert(instanceSettings)
+    .values({ id: 1, orgMode: 'multi', defaultOrgId: null, instanceName: 'FlowBoard' })
+    .onConflictDoUpdate({
+      target: instanceSettings.id,
+      set: { orgMode: 'multi', defaultOrgId: null, instanceName: 'FlowBoard' },
+    });
+  detail('1 instance settings row (orgMode=multi)');
+
   return {
     users: userRows.length,
-    organizations: 1,
+    instance_settings: 1,
+    organizations: 2,
     teams: teamRows.length,
     team_members: teamMemberRows.length,
-    org_members: USER_SPECS.length,
-    invites: 3,
-    projects: projectRows.length,
+    org_members: USER_SPECS.length + GLOBEX_MEMBER_SPECS.length,
+    invites: 7,
+    projects: projectRows.length + globexProjectRows.length,
     project_members: projectMemberSpecs.length,
     statuses: statusRows.length,
     workflow_transitions: CORE_TRANSITIONS.length,
@@ -1778,6 +2197,124 @@ function buildCoreDrafts(random: Random, now: Date): TaskDraft[] {
     // "In Progress" is capped at 3 and already holds 3 — subtasks must land
     // elsewhere or the seeded board opens already over its WIP limit.
     subtaskParentStatusNames: ['Selected', 'In Review', 'Done'],
+  });
+}
+
+/**
+ * Globex's two projects.
+ *
+ * Both keep the default three-column workflow, and between them they hold ~29
+ * issues spread across every type and across past, present and future dates —
+ * enough that the admin Projects table shows two live rows with real counts and
+ * a real "last activity", and that the growth analytics domain has a second
+ * tenant to compare against rather than a single bar.
+ */
+function buildGlobexStorefrontDrafts(random: Random, now: Date): TaskDraft[] {
+  return buildDrafts(random, now, {
+    projectKey: 'GX',
+    titles: GX_TITLES,
+    doneStatusNames: ['Done'],
+    epics: [
+      {
+        title: 'Checkout rebuild',
+        statusName: 'In Progress',
+        startOffset: -24,
+        dueOffset: 18,
+        resolved: false,
+      },
+      {
+        title: 'Catalogue performance',
+        statusName: 'To Do',
+        startOffset: -6,
+        dueOffset: 40,
+        resolved: false,
+      },
+    ],
+    buckets: [
+      {
+        sprintName: 'GX Sprint 4',
+        statusNames: random.shuffle(expand([['Done', 3]])),
+        mode: 'completed',
+        windowStart: addDays(now, -25),
+        windowEnd: addDays(now, -11),
+      },
+      {
+        sprintName: 'GX Sprint 5',
+        statusNames: random.shuffle(
+          expand([
+            ['To Do', 3],
+            ['In Progress', 2],
+            ['Done', 2],
+          ]),
+        ),
+        mode: 'active',
+        windowStart: addDays(now, -4),
+        windowEnd: addDays(now, 10),
+      },
+      {
+        sprintName: null,
+        statusNames: expand([['To Do', 3]]),
+        mode: 'backlog',
+        windowStart: now,
+        windowEnd: addDays(now, 60),
+      },
+    ],
+    labelNames: GLOBEX_LABELS.map((label) => label.name),
+    assigneeKeys: ['nina', 'liam', 'priya', 'ada'],
+    reporterKeys: ['ada', 'nina'],
+    subtaskCount: 2,
+    subtaskSprintName: 'GX Sprint 5',
+  });
+}
+
+function buildGlobexOpsDrafts(random: Random, now: Date): TaskDraft[] {
+  return buildDrafts(random, now, {
+    projectKey: 'OPS',
+    titles: OPS_TITLES,
+    doneStatusNames: ['Done'],
+    epics: [
+      {
+        title: 'Fulfilment automation',
+        statusName: 'In Progress',
+        startOffset: -15,
+        dueOffset: 25,
+        resolved: false,
+      },
+    ],
+    buckets: [
+      {
+        sprintName: null,
+        statusNames: random.shuffle(expand([['Done', 2]])),
+        mode: 'completed',
+        windowStart: addDays(now, -34),
+        windowEnd: addDays(now, -20),
+      },
+      {
+        sprintName: 'OPS Sprint 2',
+        statusNames: random.shuffle(
+          expand([
+            ['To Do', 2],
+            ['In Progress', 2],
+            ['Done', 1],
+          ]),
+        ),
+        mode: 'active',
+        windowStart: addDays(now, -6),
+        windowEnd: addDays(now, 8),
+      },
+      {
+        sprintName: null,
+        statusNames: expand([['To Do', 2]]),
+        mode: 'backlog',
+        windowStart: now,
+        windowEnd: addDays(now, 60),
+      },
+    ],
+    labelNames: OPS_LABELS.map((label) => label.name),
+    assigneeKeys: ['nina', 'tom', 'priya', 'liam'],
+    reporterKeys: ['nina', 'tom'],
+    subtaskCount: 2,
+    subtaskSprintName: 'OPS Sprint 2',
   });
 }
 

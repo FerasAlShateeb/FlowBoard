@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -14,6 +14,8 @@ import {
   useShortcuts,
 } from '@/lib/shortcuts';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { TopbarSlotZone, __resetTopbarSlotsForTests } from '@/components/layout/TopbarSlots';
 import { useLayoutStore } from '@/stores/useLayoutStore';
 import { useDiagLogsStore, __resetDiagPollStateForTests } from '@/stores/useDiagLogsStore';
 import DiagnosticsDrawer from '@/components/diagnostics/DiagnosticsDrawer';
@@ -93,8 +95,20 @@ function seedRecords(records: ServerLogRecord[] = RECORDS): void {
   useDiagLogsStore.setState({ records, lastId: records[records.length - 1]?.id ?? 0 });
 }
 
-/** Signs in a global admin (or a plain member) via the persisted session. */
-function signIn({ isGlobalAdmin }: { isGlobalAdmin: boolean }): void {
+/**
+ * Signs in a global admin (or a plain member) via the persisted session.
+ *
+ * `viewingAsMember` goes through the store's own setter rather than `setState`,
+ * because it also persists `fb-view-mode-v1` — the posture is a separate key
+ * from the session, and the drawer's gate reads the live store value.
+ */
+function signIn({
+  isGlobalAdmin,
+  viewingAsMember = false,
+}: {
+  isGlobalAdmin: boolean;
+  viewingAsMember?: boolean;
+}): void {
   useAuthStore.setState({
     user: {
       id: '88888888-8888-4888-8888-888888888888',
@@ -107,6 +121,7 @@ function signIn({ isGlobalAdmin }: { isGlobalAdmin: boolean }): void {
       createdAt: '2026-01-01T00:00:00.000Z',
     },
   });
+  useAuthStore.getState().setViewingAsMember(viewingAsMember);
 }
 
 function renderDrawer(): void {
@@ -114,7 +129,19 @@ function renderDrawer(): void {
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   function Wrapper({ children }: { children: ReactNode }) {
-    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={queryClient}>
+        {/* The trigger is a `Tooltip`, which the shell provides for; rendering
+            the slot zone here means this suite has to as well. */}
+        <TooltipProvider>
+          {children}
+          {/* The drawer registers its topbar button through the slot registry,
+              so a zone has to be on screen for that half of the gate to be
+              assertable at all. */}
+          <TopbarSlotZone zone="end" />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
   }
   render(<DiagnosticsDrawer />, { wrapper: Wrapper });
 }
@@ -133,14 +160,18 @@ function renderOpenForAdmin(): void {
 beforeEach(() => {
   clearShortcutsForTest();
   __resetDiagPollStateForTests();
+  __resetTopbarSlotsForTests();
   useLayoutStore.setState({ diagOpen: false, diagDock: 'bottom', diagHeight: 288, diagWidth: 380 });
   useAuthStore.setState({ user: null });
+  useAuthStore.getState().setViewingAsMember(false);
 });
 
 afterEach(() => {
   cleanup();
   clearShortcutsForTest();
   __resetDiagPollStateForTests();
+  __resetTopbarSlotsForTests();
+  useAuthStore.getState().setViewingAsMember(false);
   vi.unstubAllGlobals();
 });
 
@@ -174,6 +205,58 @@ describe('DiagnosticsDrawer gating', () => {
     expect(drawer).toBeInTheDocument();
     expect(drawer).toHaveAttribute('data-dock', 'bottom');
     expect(drawer).toHaveAccessibleName('Diagnostics');
+  });
+
+  it('registers the topbar trigger for a global admin, and none for a member', () => {
+    renderOpenForAdmin();
+    expect(screen.getByTestId('fb-diag-trigger')).toBeInTheDocument();
+
+    cleanup();
+    __resetTopbarSlotsForTests();
+    signIn({ isGlobalAdmin: false });
+    useLayoutStore.setState({ diagOpen: true });
+    renderDrawer();
+
+    expect(screen.queryByTestId('fb-diag-trigger')).not.toBeInTheDocument();
+  });
+
+  /**
+   * VIEW-AS-MEMBER IS A CHROME GATE (R2 W3.5).
+   *
+   * admin.md §4.1: every chrome surface reads `isEffectiveGlobalAdmin()`, and
+   * only the switch itself reads the real flag. The drawer read the REAL one, so
+   * an admin previewing member view kept a topbar button no member has, kept
+   * Ctrl+J bound away from the browser, and kept a live server-log tail docked
+   * beside the board they were previewing — the one thing the preview exists to
+   * make impossible to see. All three halves of the gate are asserted, because
+   * they are three separate `isGlobalAdmin` reads in the component.
+   */
+  it('renders nothing, registers no chords and offers no trigger while an admin previews member view', () => {
+    signIn({ isGlobalAdmin: true, viewingAsMember: true });
+    useLayoutStore.setState({ diagOpen: true });
+    seedRecords();
+
+    renderDrawer();
+
+    expect(screen.queryByTestId('fb-diag-drawer')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('fb-diag-trigger')).not.toBeInTheDocument();
+    expect(registeredIds()).toEqual([]);
+  });
+
+  it('comes back the moment the admin returns to admin view', () => {
+    signIn({ isGlobalAdmin: true, viewingAsMember: true });
+    useLayoutStore.setState({ diagOpen: true });
+    seedRecords();
+    renderDrawer();
+    expect(screen.queryByTestId('fb-diag-drawer')).not.toBeInTheDocument();
+
+    act(() => {
+      useAuthStore.getState().setViewingAsMember(false);
+    });
+
+    expect(screen.getByTestId('fb-diag-drawer')).toBeInTheDocument();
+    expect(screen.getByTestId('fb-diag-trigger')).toBeInTheDocument();
+    expect(registeredIds()).toEqual(['diagnostics.toggle', 'diagnostics.cycleDock']);
   });
 });
 

@@ -20,8 +20,21 @@ import { useThemeStore } from '@/stores/useThemeStore';
  *
  * Nothing here is directional: `border-e`/`last:border-e-0` mirror themselves
  * under `dir="rtl"`.
+ *
+ * `compact` DROPS THE TRAILING HINT, and nothing else. It is what the Theme
+ * Studio DRAWER renders with: 380px holding eight of these needs the label, the
+ * live word and the control — and the sentence explaining what "Elevation"
+ * means belongs on `/theme`, the surface built for reading. Every semantic
+ * (`radiogroup`, `aria-checked`, the same keys) is identical, so the two
+ * surfaces cannot drift into two different controls.
  */
-export function SegmentedOptions({ group }: { group: DimensionGroup }) {
+export function SegmentedOptions({
+  group,
+  compact = false,
+}: {
+  group: DimensionGroup;
+  compact?: boolean;
+}) {
   const { t } = useTranslation(['theme']);
   const shared = useThemeStore((state) => state.theme.shared);
   const patchShared = useThemeStore((state) => state.patchShared);
@@ -70,7 +83,9 @@ export function SegmentedOptions({ group }: { group: DimensionGroup }) {
         })}
       </div>
 
-      <p className="text-xs text-muted-foreground">{t(`theme:hints.${group.key}`)}</p>
+      {compact ? null : (
+        <p className="text-xs text-muted-foreground">{t(`theme:hints.${group.key}`)}</p>
+      )}
     </div>
   );
 }

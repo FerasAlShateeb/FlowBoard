@@ -22,10 +22,12 @@ import {
   AXIS_TICK,
   CHART_CHROME,
   CHART_SERIES,
+  chartAnimation,
   DASH,
   PLANNED_FILL_OPACITY,
   PLOT_MARGIN,
   STROKE,
+  useColdChart,
 } from './chart-theme';
 import { velocityAverage, velocityHeadline } from './report-summaries';
 
@@ -52,6 +54,9 @@ import { velocityAverage, velocityHeadline } from './report-summaries';
 export function VelocityChart({ sprints }: { sprints: readonly VelocitySprint[] }) {
   const { t } = useTranslation(['reports']);
   const format = useChartFormat();
+  // Registry entry #6: a COLD load draws itself in, a warm refetch does not,
+  // and Reduced motion never does. One call, spread onto every series below.
+  const animation = chartAnimation(useColdChart());
   const headline = velocityHeadline(sprints);
   const average = velocityAverage(sprints);
 
@@ -105,13 +110,13 @@ export function VelocityChart({ sprints }: { sprints: readonly VelocitySprint[] 
             fill={CHART_SERIES.planned}
             fillOpacity={PLANNED_FILL_OPACITY}
             radius={[2, 2, 0, 0]}
-            isAnimationActive={false}
+            {...animation}
           />
           <Bar
             dataKey="completedPoints"
             fill={CHART_SERIES.delivered}
             radius={[2, 2, 0, 0]}
-            isAnimationActive={false}
+            {...animation}
           />
           {average === null ? null : (
             <ReferenceLine

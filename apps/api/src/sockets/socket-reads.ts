@@ -38,7 +38,7 @@ import {
   type UserSummary,
 } from '@flowboard/shared';
 
-import { comments, db, notifications, projects, users } from '../db';
+import { comments, db, notifications, organizations, projects, users } from '../db';
 import { logger } from '../utils/logger';
 
 /** `{ projectId, orgId }` — the shape {@link resolveProjectRole} takes. */
@@ -52,12 +52,24 @@ export interface ProjectRef {
  *
  * Soft-deleted projects are excluded, so a join into an archived project is a
  * `NOT_FOUND` ack rather than a room nobody will ever broadcast to.
+ *
+ * SO ARE PROJECTS IN AN ARCHIVED ORGANIZATION (R2 W3.5). This is the socket
+ * half of the fix documented at the top of `middlewares/require-roles.ts`:
+ * archiving an org does not touch its project rows, so without the join a
+ * member of a switched-off org could still `project:join` and keep receiving
+ * task, comment and presence traffic for it over a socket that was opened
+ * before the archive — or opened after it, since the handshake only checks the
+ * user. `rooms.handleJoin` calls this BEFORE `resolveProjectRole`, so the
+ * refusal covers a global admin as well.
  */
 export async function loadProjectRef(projectId: string): Promise<ProjectRef | null> {
   const [row] = await db
     .select({ projectId: projects.id, orgId: projects.orgId })
     .from(projects)
-    .where(and(eq(projects.id, projectId), isNull(projects.deletedAt)))
+    .innerJoin(organizations, eq(projects.orgId, organizations.id))
+    .where(
+      and(eq(projects.id, projectId), isNull(projects.deletedAt), isNull(organizations.deletedAt)),
+    )
     .limit(1);
   return row ?? null;
 }

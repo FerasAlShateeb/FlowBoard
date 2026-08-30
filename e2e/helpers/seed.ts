@@ -2,7 +2,7 @@
  * What `apps/api/src/scripts/seed.ts` puts in the database, named once.
  *
  * Specs assert against these constants rather than against literals scattered
- * through fourteen files: when the seed changes, exactly one file has to.
+ * through two dozen files: when the seed changes, exactly one file has to.
  * Anything DERIVED from the seed's pseudo-random generator (which task sits in
  * which column, how many dependencies exist) is deliberately absent — those are
  * read from the API at test time, because pinning them here would turn a seed
@@ -104,6 +104,48 @@ export const MEMBER_PASSWORD = 'password1234';
 
 export const ORG_SLUG = 'acme';
 export const ORG_NAME = 'Acme Corporation';
+
+/**
+ * The SECOND tenant, added by Round 2's seed.
+ *
+ * It is the reason the post-login landing is the org picker rather than a
+ * redirect, and it is what makes the org switcher, the cross-org admin tables
+ * and single-organization mode testable at all — every one of those surfaces is
+ * a no-op on a deployment with one organization.
+ *
+ * Its membership OVERLAPS Acme's on purpose (`ada`, `nina`, `liam`, `tom`), so
+ * an account exists that can switch, and `priya` belongs to Globex and nowhere
+ * else, so "this account's org list is not simply all of them" has a row.
+ */
+export const SECOND_ORG = {
+  slug: 'globex',
+  name: 'Globex Corp',
+} as const;
+
+/**
+ * An account that belongs to BOTH organizations.
+ *
+ * `instance-mode.spec` needs one: in multi mode a member of two orgs lands on
+ * the picker, so single mode short-circuiting straight into the default org is
+ * an observable change rather than the same redirect by another name. A member
+ * of one org would have been redirected either way and would have proved
+ * nothing.
+ */
+export const MULTI_ORG_MEMBER = MEMBER_2;
+
+/**
+ * The account that belongs to Globex and nowhere else.
+ *
+ * `view-as.spec` uses her as the OWNER of a fixture organization, so that the
+ * global admin is provably not a member of it — which is the only way
+ * `?scope=member` can be observed to narrow anything. (`POST /orgs` takes an
+ * `adminUserId` precisely so an admin can provision an org for somebody else.)
+ */
+export const OTHER_ORG_MEMBER = {
+  email: 'priya@flowboard.dev',
+  password: 'password1234',
+  name: 'Priya Raman',
+} as const;
 
 /** The default-workflow project: three columns, NO transition rules, no WIP limit. */
 export const FLOW = {
